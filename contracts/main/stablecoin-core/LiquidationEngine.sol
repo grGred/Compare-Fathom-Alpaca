@@ -1,28 +1,38 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+/**
+  ∩~~~~∩ 
+  ξ ･×･ ξ 
+  ξ　~　ξ 
+  ξ　　 ξ 
+  ξ　　 “~～~～〇 
+  ξ　　　　　　 ξ 
+  ξ ξ ξ~～~ξ ξ ξ 
+　 ξ_ξξ_ξ　ξ_ξξ_ξ
+Alpaca Fin Corporation
+*/
 
-pragma solidity 0.8.17;
+pragma solidity 0.6.12;
 pragma experimental ABIEncoderV2;
 
-import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/math/SafeMathUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
 
 import "../interfaces/IBookKeeper.sol";
 import "../interfaces/ISystemDebtEngine.sol";
 import "../interfaces/ILiquidationEngine.sol";
 import "../interfaces/ILiquidationStrategy.sol";
 import "../interfaces/ICagable.sol";
-import "../interfaces/ISetPrice.sol";
 
 /// @title LiquidationEngine
+/// @author Alpaca Fin Corporation
 /** @notice A contract which is the manager for all of the liquidations of the protocol.
     LiquidationEngine will be the interface for the liquidator to trigger any positions into the liquidation process.
 */
 
 contract LiquidationEngine is PausableUpgradeable, ReentrancyGuardUpgradeable, ICagable, ILiquidationEngine {
   using SafeMathUpgradeable for uint256;
-  address public priceOracle;
 
   struct LocalVars {
     uint256 positionLockedCollateral;
@@ -42,7 +52,6 @@ contract LiquidationEngine is PausableUpgradeable, ReentrancyGuardUpgradeable, I
   IBookKeeper public bookKeeper; // CDP Engine
   ISystemDebtEngine public systemDebtEngine; // Debt Engine
   uint256 public override live; // Active Flag
-  mapping(address => uint256) public liquidatorsWhitelist;
 
   modifier onlyOwnerOrShowStopper() {
     IAccessControlConfig _accessControlConfig = IAccessControlConfig(IBookKeeper(bookKeeper).accessControlConfig());
@@ -64,13 +73,8 @@ contract LiquidationEngine is PausableUpgradeable, ReentrancyGuardUpgradeable, I
     _;
   }
 
-    modifier onlyWhitelisted() {
-    require(liquidatorsWhitelist[msg.sender] == 1, "LiquidationEngine/liquidator-not-whitelisted");
-    _;
-  }
-
   // --- Init ---
-  function initialize(address _bookKeeper, address _systemDebtEngine, address _priceOracle) external initializer {
+  function initialize(address _bookKeeper, address _systemDebtEngine) external initializer {
     PausableUpgradeable.__Pausable_init();
     ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
 
@@ -80,53 +84,11 @@ contract LiquidationEngine is PausableUpgradeable, ReentrancyGuardUpgradeable, I
     ISystemDebtEngine(_systemDebtEngine).surplusBuffer(); // Sanity Check Call
     systemDebtEngine = ISystemDebtEngine(_systemDebtEngine);
 
-    priceOracle = _priceOracle;
-
     live = 1;
   }
 
   // --- Math ---
   uint256 constant WAD = 10**18;
-
-  function whitelist(address toBeWhitelisted) external onlyOwnerOrGov {
-    liquidatorsWhitelist[toBeWhitelisted] = 1;
-  }
-
-  function blacklist(address toBeRemoved) external onlyOwnerOrGov {
-    liquidatorsWhitelist[toBeRemoved] = 0;
-  }
-
-  function batchLiquidate(
-    bytes32[] calldata _collateralPoolIds,
-    address[] calldata _positionAddresses,
-    uint256[] calldata _debtShareToBeLiquidateds, // [rad]
-    uint256[] calldata _maxDebtShareToBeLiquidateds, // [rad]
-    address[] calldata _collateralRecipients,
-    bytes[] calldata datas
-  ) external override nonReentrant whenNotPaused onlyWhitelisted {
-
-    for(uint i = 0; i < _collateralPoolIds.length; i++){
-        try this.liquidate(_collateralPoolIds[i], _positionAddresses[i],_debtShareToBeLiquidateds[i], _maxDebtShareToBeLiquidateds[i], _collateralRecipients[i], datas[i],msg.sender){
-        }catch{
-            continue;
-        }
-    }
-  }
-
-  //This function is overload implementation of liquidate() and will only be called from LiquidationEngine contract to support batch liquidation, 
-  function liquidate(
-    bytes32 _collateralPoolId,
-    address _positionAddress,
-    uint256 _debtShareToBeLiquidated, // [rad]
-    uint256 _maxDebtShareToBeLiquidated, // [wad]
-    address _collateralRecipient,
-    bytes calldata _data,
-    address sender
-  ) external override whenNotPaused {
-    require(msg.sender == address(this),"LiquidationEngine/invalid-sender");
-    _liquidate(_collateralPoolId, _positionAddress, _debtShareToBeLiquidated,_maxDebtShareToBeLiquidated, _collateralRecipient, _data,sender);
-  }
-
 
   function liquidate(
     bytes32 _collateralPoolId,
@@ -135,20 +97,7 @@ contract LiquidationEngine is PausableUpgradeable, ReentrancyGuardUpgradeable, I
     uint256 _maxDebtShareToBeLiquidated, // [wad]
     address _collateralRecipient,
     bytes calldata _data
-  ) external override nonReentrant whenNotPaused onlyWhitelisted {
-    _liquidate(_collateralPoolId, _positionAddress, _debtShareToBeLiquidated,_maxDebtShareToBeLiquidated, _collateralRecipient, _data, msg.sender);
-  }
-
-  function _liquidate(
-    bytes32 _collateralPoolId,
-    address _positionAddress,
-    uint256 _debtShareToBeLiquidated, // [rad]
-    uint256 _maxDebtShareToBeLiquidated, // [wad]
-    address _collateralRecipient,
-    bytes calldata _data,
-    address sender
-  ) internal {
-
+  ) external override nonReentrant whenNotPaused {
     require(live == 1, "LiquidationEngine/not-live");
     require(_debtShareToBeLiquidated != 0, "LiquidationEngine/zero-debt-value-to-be-liquidated");
     require(_maxDebtShareToBeLiquidated != 0, "LiquidationEngine/zero-max-debt-value-to-be-liquidated");
@@ -190,7 +139,7 @@ contract LiquidationEngine is PausableUpgradeable, ReentrancyGuardUpgradeable, I
       _positionAddress,
       _debtShareToBeLiquidated,
       _maxDebtShareToBeLiquidated,
-      sender,
+      msg.sender,
       _collateralRecipient,
       _data
     );
@@ -225,14 +174,6 @@ contract LiquidationEngine is PausableUpgradeable, ReentrancyGuardUpgradeable, I
         -int256(_vars.newPositionDebtShare)
       );
     }
-
-    ISetPrice(priceOracle).setPrice(_collateralPoolId);
-  }
-
-  function setPriceOracle(address _priceOracle) external onlyOwnerOrShowStopper {
-    require(_priceOracle != address(0), "_priceOracle cannot be zero address");
-    require(live == 1, "LiquidationEngine/not-live");
-    priceOracle = _priceOracle;
   }
 
   /// @dev access: OWNER_ROLE, SHOW_STOPPER_ROLE

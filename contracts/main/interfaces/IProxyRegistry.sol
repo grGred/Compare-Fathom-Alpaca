@@ -1,8 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity 0.8.17;
+/**
+  ∩~~~~∩ 
+  ξ ･×･ ξ 
+  ξ　~　ξ 
+  ξ　　 ξ 
+  ξ　　 “~～~～〇 
+  ξ　　　　　　 ξ 
+  ξ ξ ξ~～~ξ ξ ξ 
+　 ξ_ξξ_ξ　ξ_ξξ_ξ
+Alpaca Fin Corporation
+*/
+
+pragma solidity 0.6.12;
 
 interface IProxyRegistry {
-    function proxies(address) external view returns (address);
+  function proxies(address) external view returns (address);
 
-    function build(address) external returns (address);
+  function build(address) external returns (address);
 }

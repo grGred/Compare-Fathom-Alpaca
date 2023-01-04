@@ -1,10 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-pragma solidity 0.8.17;
+/**
+  ∩~~~~∩ 
+  ξ ･×･ ξ 
+  ξ　~　ξ 
+  ξ　　 ξ 
+  ξ　　 “~～~～〇 
+  ξ　　　　　　 ξ 
+  ξ ξ ξ~～~ξ ξ ξ 
+　 ξ_ξξ_ξ　ξ_ξξ_ξ
+Alpaca Fin Corporation
+*/
+
+pragma solidity 0.6.12;
 
 import "../interfaces/IBookKeeper.sol";
 
 contract PositionHandler {
-    constructor(address _bookKeeper) {
-        IBookKeeper(_bookKeeper).whitelist(msg.sender);
-    }
+  constructor(address _bookKeeper) public {
+    IBookKeeper(_bookKeeper).whitelist(msg.sender);
+  }
 }
