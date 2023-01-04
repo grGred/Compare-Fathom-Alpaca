@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+pragma solidity 0.8.17;
 
-
-pragma solidity 0.6.12;
-pragma experimental ABIEncoderV2;
-
-import '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol';
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol';
 
 import '../interfaces/IBookKeeper.sol';
 import '../interfaces/IPriceFeed.sol';
@@ -14,32 +11,27 @@ import '../interfaces/IPriceOracle.sol';
 import '../interfaces/ICagable.sol';
 import '../interfaces/ICollateralPoolConfig.sol';
 
-/// @title PriceOracle
-/// @author Alpaca Fin Corporation
 /** @notice A contract which is the price oracle of the BookKeeper to keep all collateral pools updated with the latest price of the collateral.
     The price oracle is important in reflecting the current state of the market price.
 */
-
 contract PriceOracle is PausableUpgradeable, ReentrancyGuardUpgradeable, IPriceOracle, ICagable {
-    // --- Data ---
     struct CollateralPool {
         IPriceFeed priceFeed; // Price Feed
         uint256 liquidationRatio; // Liquidation ratio or Collateral ratio [ray]
     }
 
     IBookKeeper public bookKeeper; // CDP Engine
-    uint256 public override stableCoinReferencePrice; // ref per AUSD [ray] :: value of stablecoin in the reference asset (e.g. $1 per Alpaca USD)
+    uint256 public override stableCoinReferencePrice; // ref per FUSD [ray] :: value of stablecoin in the reference asset (e.g. $1 per Fathom USD)
 
     uint256 public live;
 
-    // --- Events ---
     event LogSetPrice(
         bytes32 _poolId,
         bytes32 _rawPrice, // Raw price from price feed [wad]
-        uint256 _priceWithSafetyMargin // Price with safety margin [ray]
+        uint256 _priceWithSafetyMargin, // Price with safety margin [ray]
+        uint256 _rawPriceUint // Raw price from price feed in uint256
     );
 
-    // --- Init ---
     function initialize(address _bookKeeper) external initializer {
         PausableUpgradeable.__Pausable_init();
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
@@ -50,7 +42,6 @@ contract PriceOracle is PausableUpgradeable, ReentrancyGuardUpgradeable, IPriceO
         live = 1;
     }
 
-    // --- Math ---
     uint256 constant ONE = 10**27;
 
     function mul(uint256 _x, uint256 _y) internal pure returns (uint256 _z) {
@@ -61,7 +52,6 @@ contract PriceOracle is PausableUpgradeable, ReentrancyGuardUpgradeable, IPriceO
         _z = mul(_x, ONE) / _y;
     }
 
-    // --- Administration ---
     event LogSetStableCoinReferencePrice(address indexed _caller, uint256 _data);
 
     modifier onlyOwner() {
@@ -90,16 +80,12 @@ contract PriceOracle is PausableUpgradeable, ReentrancyGuardUpgradeable, IPriceO
         _;
     }
 
-    /// @dev access: OWNER_ROLE
     function setStableCoinReferencePrice(uint256 _data) external onlyOwner {
         require(live == 1, 'PriceOracle/not-live');
         stableCoinReferencePrice = _data;
         emit LogSetStableCoinReferencePrice(msg.sender, _data);
     }
 
-    // --- Update value ---
-    /// @dev Update the latest price with safety margin of the collateral pool to the BookKeeper
-    /// @param _collateralPoolId Collateral pool id
     function setPrice(bytes32 _collateralPoolId) external whenNotPaused {
         IPriceFeed _priceFeed = IPriceFeed(
             ICollateralPoolConfig(bookKeeper.collateralPoolConfig()).collateralPools(_collateralPoolId).priceFeed
@@ -116,30 +102,26 @@ contract PriceOracle is PausableUpgradeable, ReentrancyGuardUpgradeable, IPriceO
             _collateralPoolId,
             _priceWithSafetyMargin
         );
-        emit LogSetPrice(_collateralPoolId, _rawPrice, _priceWithSafetyMargin);
+        uint256 _rawPriceInUint = uint256(_rawPrice);
+        emit LogSetPrice(_collateralPoolId, _rawPrice, _priceWithSafetyMargin, _rawPriceInUint);
     }
 
-    /// @dev access: OWNER_ROLE, SHOW_STOPPER_ROLE
     function cage() external override onlyOwnerOrShowStopper {
         require(live == 1, 'PriceOracle/not-live');
         live = 0;
         emit LogCage();
     }
 
-    /// @dev access: OWNER_ROLE, SHOW_STOPPER_ROLE
     function uncage() external override onlyOwnerOrShowStopper {
         require(live == 0, 'PriceOracle/not-caged');
         live = 1;
         emit LogUncage();
     }
 
-    // --- pause ---
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function pause() external onlyOwnerOrGov {
         _pause();
     }
 
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function unpause() external onlyOwnerOrGov {
         _unpause();
     }

@@ -1,33 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/**
-  ∩~~~~∩ 
-  ξ ･×･ ξ 
-  ξ　~　ξ 
-  ξ　　 ξ 
-  ξ　　 “~～~～〇 
-  ξ　　　　　　 ξ 
-  ξ ξ ξ~～~ξ ξ ξ 
-　 ξ_ξξ_ξ　ξ_ξξ_ξ
-Alpaca Fin Corporation
-*/
-
-pragma solidity 0.6.12;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-
 import '../interfaces/IStablecoin.sol';
 
-// FIXME: This contract was altered compared to the production version.
-// It doesn't use LibNote anymore.
-// New deployments of this contract will need to include custom events (TO DO).
-
-contract AlpacaStablecoin is IStablecoin, AccessControlUpgradeable {
+contract FathomStablecoin is IStablecoin, AccessControlUpgradeable {
     bytes32 public constant OWNER_ROLE = DEFAULT_ADMIN_ROLE;
     bytes32 public constant MINTER_ROLE = keccak256('MINTER_ROLE');
 
-    // --- ERC20 Data ---
-    string public name; // Alpaca USD Stablecoin
-    string public symbol; // AUSD
+    string public name; // Fathom USD Stablecoin
+    string public symbol; // FUSD
     string public constant version = '1';
     uint8 public constant override decimals = 18;
     uint256 public totalSupply;
@@ -39,7 +21,6 @@ contract AlpacaStablecoin is IStablecoin, AccessControlUpgradeable {
     event Approval(address indexed src, address indexed guy, uint256 wad);
     event Transfer(address indexed src, address indexed dst, uint256 wad);
 
-    // --- Math ---
     function add(uint256 _x, uint256 _y) internal pure returns (uint256 _z) {
         require((_z = _x + _y) >= _x);
     }
@@ -48,19 +29,15 @@ contract AlpacaStablecoin is IStablecoin, AccessControlUpgradeable {
         require((_z = _x - _y) <= _x);
     }
 
-    // --- Init ---
     function initialize(string memory _name, string memory _symbol) external initializer {
         AccessControlUpgradeable.__AccessControl_init();
 
         name = _name;
         symbol = _symbol;
 
-        // Grant the contract deployer the default admin role: it will be able
-        // to grant and revoke any roles
         _setupRole(OWNER_ROLE, msg.sender);
     }
 
-    // --- Token ---
     function transfer(address _dst, uint256 _wad) external override returns (bool) {
         return transferFrom(msg.sender, _dst, _wad);
     }
@@ -70,9 +47,9 @@ contract AlpacaStablecoin is IStablecoin, AccessControlUpgradeable {
         address _dst,
         uint256 _wad
     ) public override returns (bool) {
-        require(balanceOf[_src] >= _wad, 'AlpacaStablecoin/insufficient-balance');
-        if (_src != msg.sender && allowance[_src][msg.sender] != uint256(-1)) {
-            require(allowance[_src][msg.sender] >= _wad, 'AlpacaStablecoin/insufficient-allowance');
+        require(balanceOf[_src] >= _wad, 'FathomStablecoin/insufficient-balance');
+        if (_src != msg.sender && allowance[_src][msg.sender] != type(uint256).max) {
+            require(allowance[_src][msg.sender] >= _wad, 'FathomStablecoin/insufficient-allowance');
             allowance[_src][msg.sender] = sub(allowance[_src][msg.sender], _wad);
         }
         balanceOf[_src] = sub(balanceOf[_src], _wad);
@@ -81,7 +58,6 @@ contract AlpacaStablecoin is IStablecoin, AccessControlUpgradeable {
         return true;
     }
 
-    /// @dev access: MINTER_ROLE
     function mint(address _usr, uint256 _wad) external override {
         require(hasRole(MINTER_ROLE, msg.sender), '!minterRole');
 
@@ -91,9 +67,9 @@ contract AlpacaStablecoin is IStablecoin, AccessControlUpgradeable {
     }
 
     function burn(address _usr, uint256 _wad) external override {
-        require(balanceOf[_usr] >= _wad, 'AlpacaStablecoin/insufficient-balance');
-        if (_usr != msg.sender && allowance[_usr][msg.sender] != uint256(-1)) {
-            require(allowance[_usr][msg.sender] >= _wad, 'AlpacaStablecoin/insufficient-allowance');
+        require(balanceOf[_usr] >= _wad, 'FathomStablecoin/insufficient-balance');
+        if (_usr != msg.sender && allowance[_usr][msg.sender] != type(uint256).max) {
+            require(allowance[_usr][msg.sender] >= _wad, 'FathomStablecoin/insufficient-allowance');
             allowance[_usr][msg.sender] = sub(allowance[_usr][msg.sender], _wad);
         }
         balanceOf[_usr] = sub(balanceOf[_usr], _wad);
@@ -107,7 +83,6 @@ contract AlpacaStablecoin is IStablecoin, AccessControlUpgradeable {
         return true;
     }
 
-    // --- Alias ---
     function push(address _usr, uint256 _wad) external {
         transferFrom(msg.sender, _usr, _wad);
     }

@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+pragma solidity 0.8.17;
 
-pragma solidity 0.6.12;
-pragma experimental ABIEncoderV2;
-
-import '../interfaces/IAlpacaVault.sol';
+import '../interfaces/IFathomVault.sol';
 import '../interfaces/IBookKeeper.sol';
-import '../interfaces/IWBNB.sol';
+import '../interfaces/IWXDC.sol';
 import '../interfaces/IToken.sol';
 import '../interfaces/IManager.sol';
 import '../interfaces/IGenericTokenAdapter.sol';
@@ -16,18 +14,14 @@ import '../interfaces/IProxyRegistry.sol';
 import '../interfaces/IProxy.sol';
 import '../utils/SafeToken.sol';
 
-/// ==============================
 /// @notice WARNING: These functions meant to be used as a a library for a Proxy.
 /// @notice DO NOT CALL ANY FUNCTION IN THIS CONTRACT DIRECTLY.
 /// @notice Hence, it shouldn't has any state vairables. Some are unsafe if you call them directly.
-/// ==============================
-
-contract AlpacaStablecoinProxyActions {
+contract FathomStablecoinProxyActions {
     using SafeToken for address;
 
     uint256 internal constant RAY = 10**27;
 
-    /// @dev Internal functions
     function _safeSub(uint256 _x, uint256 _y) internal pure returns (uint256 _z) {
         require((_z = _x - _y) <= _x, 'sub-overflow');
     }
@@ -37,8 +31,6 @@ contract AlpacaStablecoinProxyActions {
         require(_y >= 0, 'int-overflow');
     }
 
-    /// @notice Internal functions
-    /// @dev Safe multiplication to prevent uint overflow
     function _safeMul(uint256 _x, uint256 _y) internal pure returns (uint256 _z) {
         require(_y == 0 || (_z = _x * _y) / _y == _x, 'mul-overflow');
     }
@@ -60,19 +52,16 @@ contract AlpacaStablecoinProxyActions {
         bytes32 _collateralPoolId,
         uint256 _stablecoinAmount // [wad]
     ) internal returns (int256 _resultDebtShare) {
-        // Updates stability fee rate
-        uint256 _debtAccumulatedRate = IStabilityFeeCollector(_stabilityFeeCollector).collect(_collateralPoolId); // [ray]
+        uint256 _debtAccumulatedRate = IStabilityFeeCollector(_stabilityFeeCollector).collect(_collateralPoolId); // [ray]. Updates stability fee rate
+        uint256 _positionStablecoinValue = IBookKeeper(_bookKeeper).stablecoin(_positionAddress); // [rad]. Gets Fathom Stablecoin balance of the positionAddress in the bookKeeper
 
-        // Gets Alpaca Stablecoin balance of the positionAddress in the bookKeeper
-        uint256 _positionStablecoinValue = IBookKeeper(_bookKeeper).stablecoin(_positionAddress); // [rad]
-
-        // If there was already enough Alpaca Stablecoin in the bookKeeper balance, just exits it without adding more debt
+        // If there was already enough Fathom Stablecoin in the bookKeeper balance, just exits it without adding more debt
         if (_positionStablecoinValue < _safeMul(_stablecoinAmount, RAY)) {
-            // Calculates the needed resultDebtShare so together with the existing positionStablecoinValue in the bookKeeper is enough to exit stablecoinAmount of Alpaca Stablecoin tokens
+            // Calculates the needed resultDebtShare so together with the existing positionStablecoinValue in the bookKeeper is enough to exit stablecoinAmount of Fathom Stablecoin tokens
             _resultDebtShare = _safeToInt(
                 _safeSub(_safeMul(_stablecoinAmount, RAY), _positionStablecoinValue) / _debtAccumulatedRate
             );
-            // This is neeeded due lack of precision. It might need to sum an extra resultDebtShare wei (for the given Alpaca Stablecoin stablecoinAmount)
+            // This is neeeded due lack of precision. It might need to sum an extra resultDebtShare wei (for the given Fathom Stablecoin stablecoinAmount)
             _resultDebtShare = _safeMul(uint256(_resultDebtShare), _debtAccumulatedRate) <
                 _safeMul(_stablecoinAmount, RAY)
                 ? _resultDebtShare + 1
@@ -86,18 +75,12 @@ contract AlpacaStablecoinProxyActions {
         address _positionAddress,
         bytes32 _collateralPoolId
     ) internal view returns (int256 _resultDebtShare) {
-        // Gets actual rate from the bookKeeper
         uint256 _debtAccumulatedRate = ICollateralPoolConfig(IBookKeeper(_bookKeeper).collateralPoolConfig())
-            .getDebtAccumulatedRate(_collateralPoolId); // [ray]
+            .getDebtAccumulatedRate(_collateralPoolId); // [ray]. // Gets actual rate from the bookKeeper
+        (, uint256 _debtShare) = IBookKeeper(_bookKeeper).positions(_collateralPoolId, _positionAddress); // [wad]. // Gets actual debtShare value of the positionAddress
 
-        // Gets actual debtShare value of the positionAddress
-        (, uint256 _debtShare) = IBookKeeper(_bookKeeper).positions(_collateralPoolId, _positionAddress); // [wad]
-
-        // Uses the whole stablecoin balance in the bookKeeper to reduce the debt
-        _resultDebtShare = _safeToInt(_stablecoinValue / _debtAccumulatedRate); // [wad]
-
-        // Checks the calculated resultDebtShare is not higher than positionAddress.art (total debt), otherwise uses its value
-        _resultDebtShare = uint256(_resultDebtShare) <= _debtShare ? -_resultDebtShare : -_safeToInt(_debtShare); // [wad]
+        _resultDebtShare = _safeToInt(_stablecoinValue / _debtAccumulatedRate); // [wad]. // Uses the whole stablecoin balance in the bookKeeper to reduce the debt
+        _resultDebtShare = uint256(_resultDebtShare) <= _debtShare ? -_resultDebtShare : -_safeToInt(_debtShare); // [wad]. // Checks the calculated resultDebtShare is not higher than positionAddress.art (total debt), otherwise uses its value
     }
 
     function _getWipeAllStablecoinAmount(
@@ -106,13 +89,10 @@ contract AlpacaStablecoinProxyActions {
         address _positionAddress,
         bytes32 _collateralPoolId
     ) internal view returns (uint256 _requiredStablecoinAmount) {
-        // Gets actual rate from the bookKeeper
         uint256 _debtAccumulatedRate = ICollateralPoolConfig(IBookKeeper(_bookKeeper).collateralPoolConfig())
-            .getDebtAccumulatedRate(_collateralPoolId); // [ray]
-        // Gets actual debtShare value of the positionAddress
-        (, uint256 _debtShare) = IBookKeeper(_bookKeeper).positions(_collateralPoolId, _positionAddress); // [wad]
-        // Gets actual stablecoin amount in the usr
-        uint256 _stablecoinValue = IBookKeeper(_bookKeeper).stablecoin(_usr); // [rad]
+            .getDebtAccumulatedRate(_collateralPoolId); // [ray]. Gets actual rate from the bookKeeper
+        (, uint256 _debtShare) = IBookKeeper(_bookKeeper).positions(_collateralPoolId, _positionAddress); // [wad]. Gets actual debtShare value of the positionAddress
+        uint256 _stablecoinValue = IBookKeeper(_bookKeeper).stablecoin(_usr); // [rad]. Gets actual stablecoin amount in the usr
 
         uint256 _positionDebtValue = _safeMul(_debtShare, _debtAccumulatedRate);
         uint256 _requiredStablecoinValue = _positionDebtValue >= _stablecoinValue
@@ -126,7 +106,6 @@ contract AlpacaStablecoinProxyActions {
             : _requiredStablecoinAmount;
     }
 
-    /// @notice Public functions
     /// @param _adapter The address of stablecoin adapter
     /// @param _positionAddress The address of the Position Handler
     /// @param _stablecoinAmount The amount in wad to be deposit to Stablecoin adapter [wad]
@@ -138,15 +117,14 @@ contract AlpacaStablecoinProxyActions {
         bytes calldata _data
     ) public {
         address _stablecoin = address(IStablecoinAdapter(_adapter).stablecoin());
-        // Gets Alpaca Stablecoin from the user's wallet
+        // Gets Fathom Stablecoin from the user's wallet
         _stablecoin.safeTransferFrom(msg.sender, address(this), _stablecoinAmount);
-        // Approves adapter to take the Alpaca Stablecoin amount
+        // Approves adapter to take the Fathom Stablecoin amount
         _stablecoin.safeApprove(_adapter, _stablecoinAmount);
-        // Deposits Alpaca Stablecoin into the bookKeeper
+        // Deposits Fathom Stablecoin into the bookKeeper
         IStablecoinAdapter(_adapter).deposit(_positionAddress, _stablecoinAmount, _data);
     }
 
-    // Public functions
     function transfer(
         address _collateralToken,
         address _dst,
@@ -155,18 +133,15 @@ contract AlpacaStablecoinProxyActions {
         address(_collateralToken).safeTransfer(_dst, _amt);
     }
 
-    function bnbAdapterDeposit(
+    function xdcAdapterDeposit(
         address _adapter,
         address _positionAddress,
         bytes calldata _data
     ) public payable {
         address _collateralToken = address(IGenericTokenAdapter(_adapter).collateralToken());
-        // Wraps BNB into WBNB
-        IWBNB(_collateralToken).deposit{value: msg.value}();
-        // Approves adapter to take the WBNB amount
-        _collateralToken.safeApprove(address(_adapter), msg.value);
-        // Deposits WBNB collateral into the bookKeeper
-        IGenericTokenAdapter(_adapter).deposit(_positionAddress, msg.value, _data);
+        IWXDC(_collateralToken).deposit{value: msg.value}(); // Wraps XDC into WXDC
+        _collateralToken.safeApprove(address(_adapter), msg.value); // Approves adapter to take the WXDC amount
+        IGenericTokenAdapter(_adapter).deposit(_positionAddress, msg.value, _data); // Deposits WXDC collateral into the bookKeeper
     }
 
     function tokenAdapterDeposit(
@@ -180,13 +155,10 @@ contract AlpacaStablecoinProxyActions {
 
         // Only executes for tokens that have approval/transferFrom implementation
         if (_transferFrom) {
-            // Gets token from the user's wallet
-            _collateralToken.safeTransferFrom(msg.sender, address(this), _amount);
+            _collateralToken.safeTransferFrom(msg.sender, address(this), _amount); // Gets token from the user's wallet
         }
-        // Approves adapter to take the token amount
-        _collateralToken.safeApprove(_adapter, _amount);
-        // Deposits token collateral into the bookKeeper
-        IGenericTokenAdapter(_adapter).deposit(_positionAddress, _amount, _data);
+        _collateralToken.safeApprove(_adapter, _amount); // Approves adapter to take the token amount
+        IGenericTokenAdapter(_adapter).deposit(_positionAddress, _amount, _data); // Deposits token collateral into the bookKeeper
     }
 
     function whitelist(address _bookKeeper, address _usr) external {
@@ -219,27 +191,18 @@ contract AlpacaStablecoinProxyActions {
         uint256 _positionId,
         address _dst
     ) external {
-        // Gets actual proxy address
         address _proxy = IProxyRegistry(_proxyRegistry).proxies(_dst);
-        // Checks if the proxy address already existed and dst address is still the owner
         if (_proxy == address(0) || IProxy(_proxy).owner() != _dst) {
             uint256 _codeSize;
             assembly {
                 _codeSize := extcodesize(_dst)
             }
-            // We want to avoid creating a proxy for a contract address that might not be able to handle proxies, then losing the CDP
-            require(_codeSize == 0, 'Dst-is-a-contract');
-            // Creates the proxy for the dst address
-            _proxy = IProxyRegistry(_proxyRegistry).build(_dst);
+            require(_codeSize == 0, 'Dst-is-a-contract'); // We want to avoid creating a proxy for a contract address that might not be able to handle proxies, then losing the CDP
+            _proxy = IProxyRegistry(_proxyRegistry).build(_dst); // Creates the proxy for the dst address
         }
-        // Transfers position to the dst proxy
         transferOwnership(_manager, _positionId, _proxy);
     }
 
-    /// @dev Allow/Disallow a user to manage the position
-    /// @param _manager The PositionManager address
-    /// @param _user The user address that msg.sender would like to allow to manage his position
-    /// @param _ok The ok flag to allow/disallow
     function allowManagePosition(
         address _manager,
         uint256 _positionId,
@@ -249,10 +212,6 @@ contract AlpacaStablecoinProxyActions {
         IManager(_manager).allowManagePosition(_positionId, _user, _ok);
     }
 
-    /// @dev Allow/Disallow a user to import/export position from/to msg.sender
-    /// @param _manager The PositionManager address
-    /// @param _user The user address that msg.sender would like to allow to import/export position from/to
-    /// @param _ok The ok flag to allow/disallow
     function allowMigratePosition(
         address _manager,
         address _user,
@@ -316,47 +275,47 @@ contract AlpacaStablecoinProxyActions {
         IManager(_manager).movePosition(_source, _destination);
     }
 
-    function bnbToIbBNB(
+    function xdcToIbXDC(
         address _vault,
         uint256 _amount, // [wad]
         bool _transferTo
     ) public payable returns (uint256) {
-        SafeToken.safeApprove(address(IAlpacaVault(_vault).token()), address(_vault), _amount);
-        uint256 _ibBNBBefore = _vault.balanceOf(address(this));
-        IAlpacaVault(_vault).deposit{value: msg.value}(msg.value);
-        uint256 _ibBNBAfter = _vault.balanceOf(address(this));
-        SafeToken.safeApprove(address(IAlpacaVault(_vault).token()), address(_vault), 0);
-        uint256 _backIbBNB = _safeSub(_ibBNBAfter, _ibBNBBefore);
+        SafeToken.safeApprove(address(IFathomVault(_vault).token()), address(_vault), _amount);
+        uint256 _ibXDCBefore = _vault.balanceOf(address(this));
+        IFathomVault(_vault).deposit{value: msg.value}(msg.value);
+        uint256 _ibXDCAfter = _vault.balanceOf(address(this));
+        SafeToken.safeApprove(address(IFathomVault(_vault).token()), address(_vault), 0);
+        uint256 _backIbXDC = _safeSub(_ibXDCAfter, _ibXDCBefore);
         if (_transferTo) {
-            address(_vault).safeTransfer(msg.sender, _backIbBNB);
+            address(_vault).safeTransfer(msg.sender, _backIbXDC);
         }
-        return _backIbBNB;
+        return _backIbXDC;
     }
 
-    function ibBNBToBNB(
+    /// @dev user requires to approve the proxy wallet before calling this function
+    function ibXDCToXDC(
         address _vault,
         uint256 _amount // [wad]
     ) public payable {
-        // user requires to approve the proxy wallet before calling this function
         address(_vault).safeTransferFrom(msg.sender, address(this), _amount);
-        uint256 _bnbBefore = address(this).balance;
-        IAlpacaVault(_vault).withdraw(_amount);
-        uint256 _bnbAfter = address(this).balance;
-        SafeToken.safeTransferETH(msg.sender, _safeSub(_bnbAfter, _bnbBefore));
+        uint256 _xdcBefore = address(this).balance;
+        IFathomVault(_vault).withdraw(_amount);
+        uint256 _xdcAfter = address(this).balance;
+        SafeToken.safeTransferETH(msg.sender, _safeSub(_xdcAfter, _xdcBefore));
     }
 
+    /// @dev user requires to approve the proxy wallet before calling this function
     function tokenToIbToken(
         address _vault,
         uint256 _amount, // [wad]
         bool _transferTo
     ) public returns (uint256) {
-        // user requires to approve the proxy wallet before calling this function
-        address(IAlpacaVault(_vault).token()).safeTransferFrom(msg.sender, address(this), _amount);
-        SafeToken.safeApprove(address(IAlpacaVault(_vault).token()), address(_vault), _amount);
+        address(IFathomVault(_vault).token()).safeTransferFrom(msg.sender, address(this), _amount);
+        SafeToken.safeApprove(address(IFathomVault(_vault).token()), address(_vault), _amount);
         uint256 _collateralTokenBefore = _vault.balanceOf(address(this));
-        IAlpacaVault(_vault).deposit(_amount);
+        IFathomVault(_vault).deposit(_amount);
         uint256 _collateralTokenAfter = _vault.balanceOf(address(this));
-        SafeToken.safeApprove(address(IAlpacaVault(_vault).token()), address(_vault), 0);
+        SafeToken.safeApprove(address(IFathomVault(_vault).token()), address(_vault), 0);
         uint256 _backCollateralToken = _safeSub(_collateralTokenAfter, _collateralTokenBefore);
         if (_transferTo) {
             address(_vault).safeTransfer(msg.sender, _backCollateralToken);
@@ -364,40 +323,38 @@ contract AlpacaStablecoinProxyActions {
         return _backCollateralToken;
     }
 
+    /// @dev user requires to approve the proxy wallet before calling this function
     function ibTokenToToken(
         address _vault,
         uint256 _amount // [wad]
     ) public {
-        // user requires to approve the proxy wallet before calling this function
         address(_vault).safeTransferFrom(msg.sender, address(this), _amount);
-        uint256 _baseTokenBefore = IAlpacaVault(_vault).token().balanceOf(address(this));
-        IAlpacaVault(_vault).withdraw(_amount);
-        uint256 _baseTokenAfter = IAlpacaVault(_vault).token().balanceOf(address(this));
-        address(IAlpacaVault(_vault).token()).safeTransfer(msg.sender, _safeSub(_baseTokenAfter, _baseTokenBefore));
+        uint256 _baseTokenBefore = IFathomVault(_vault).token().balanceOf(address(this));
+        IFathomVault(_vault).withdraw(_amount);
+        uint256 _baseTokenAfter = IFathomVault(_vault).token().balanceOf(address(this));
+        address(IFathomVault(_vault).token()).safeTransfer(msg.sender, _safeSub(_baseTokenAfter, _baseTokenBefore));
     }
 
-    function lockBNB(
+    function lockXDC(
         address _manager,
-        address _bnbAdapter,
+        address _xdcAdapter,
         uint256 _positionId,
         bytes calldata _data
     ) public payable {
         address _positionAddress = IManager(_manager).positions(_positionId);
-        // Receives BNB amount, converts it to WBNB and joins it into the bookKeeper
-        bnbAdapterDeposit(_bnbAdapter, _positionAddress, _data);
-        // Locks WBNB amount into the CDP
-        adjustPosition(_manager, _positionId, _safeToInt(msg.value), 0, _bnbAdapter, _data);
+        xdcAdapterDeposit(_xdcAdapter, _positionAddress, _data); // Receives XDC amount, converts it to WXDC and joins it into the bookKeeper
+        adjustPosition(_manager, _positionId, _safeToInt(msg.value), 0, _xdcAdapter, _data); // Locks WXDC amount into the CDP
     }
 
-    function safeLockBNB(
+    function safeLockXDC(
         address _manager,
-        address _bnbAdapter,
+        address _xdcAdapter,
         uint256 _positionId,
         address _owner,
         bytes calldata _data
     ) external payable {
         require(IManager(_manager).owners(_positionId) == _owner, '!owner');
-        lockBNB(_manager, _bnbAdapter, _positionId, _data);
+        lockXDC(_manager, _xdcAdapter, _positionId, _data);
     }
 
     function lockToken(
@@ -409,11 +366,9 @@ contract AlpacaStablecoinProxyActions {
         bytes calldata _data
     ) public {
         address _positionAddress = IManager(_manager).positions(_positionId);
-
-        // Takes token amount from user's wallet and joins into the bookKeeper
-        tokenAdapterDeposit(_tokenAdapter, _positionAddress, _amount, _transferFrom, _data);
-        // Locks token amount into the position manager
-        adjustPosition(_manager, _positionId, _safeToInt(convertTo18(_tokenAdapter, _amount)), 0, _tokenAdapter, _data);
+        tokenAdapterDeposit(_tokenAdapter, _positionAddress, _amount, _transferFrom, _data); // Takes token amount from user's wallet and joins into the bookKeeper
+        adjustPosition(_manager, _positionId, _safeToInt(convertTo18(_tokenAdapter, _amount)), 0, _tokenAdapter, _data); // Locks token amount into the position manager
+        IManager(_manager).updatePrice(IManager(_manager).collateralPools(_positionId));
     }
 
     function safeLockToken(
@@ -429,23 +384,19 @@ contract AlpacaStablecoinProxyActions {
         lockToken(_manager, _tokenAdapter, _positionId, _amount, _transferFrom, _data);
     }
 
-    function unlockBNB(
+    function unlockXDC(
         address _manager,
-        address _bnbAdapter,
+        address _xdcAdapter,
         uint256 _positionId,
         uint256 _amount, // [wad]
         bytes calldata _data
     ) external {
-        // Unlocks WBNB amount from the CDP
-        adjustPosition(_manager, _positionId, -_safeToInt(_amount), 0, _bnbAdapter, _data);
-        // Moves the amount from the CDP positionAddress to proxy's address
-        moveCollateral(_manager, _positionId, address(this), _amount, _bnbAdapter, _data);
-        // Withdraws WBNB amount to proxy address as a token
-        IGenericTokenAdapter(_bnbAdapter).withdraw(address(this), _amount, _data);
-        // Converts WBNB to BNB
-        IWBNB(address(IGenericTokenAdapter(_bnbAdapter).collateralToken())).withdraw(_amount);
-        // Sends BNB back to the user's wallet
-        SafeToken.safeTransferETH(msg.sender, _amount);
+        adjustPosition(_manager, _positionId, -_safeToInt(_amount), 0, _xdcAdapter, _data); // Unlocks WXDC amount from the CDP
+        moveCollateral(_manager, _positionId, address(this), _amount, _xdcAdapter, _data); // Moves the amount from the CDP positionAddress to proxy's address
+        IGenericTokenAdapter(_xdcAdapter).withdraw(address(this), _amount, _data); // Withdraws WXDC amount to proxy address as a token
+        IWXDC(address(IGenericTokenAdapter(_xdcAdapter).collateralToken())).withdraw(_amount); // Converts WXDC to XDC
+        SafeToken.safeTransferETH(msg.sender, _amount); // Sends XDC back to the user's wallet
+        IManager(_manager).updatePrice(IManager(_manager).collateralPools(_positionId));
     }
 
     function unlockToken(
@@ -455,35 +406,29 @@ contract AlpacaStablecoinProxyActions {
         uint256 _amount, // [in token decimal]
         bytes calldata _data
     ) external {
-        // Try to decode user address for harvested rewards from calldata
-        // if the user address is not passed, then send zero address to `harvest` and let it handle
+        // Try to decode user address for harvested rewards from calldata. If the user address is not passed, then send zero address to `harvest` and let it handle
         address _user = address(0);
         if (_data.length > 0) _user = abi.decode(_data, (address));
         uint256 _amountInWad = convertTo18(_tokenAdapter, _amount);
-        // Unlocks token amount from the position
-        adjustPosition(_manager, _positionId, -_safeToInt(_amountInWad), 0, _tokenAdapter, _data);
-        // Moves the amount from the position to proxy's address
-        moveCollateral(_manager, _positionId, address(this), _amountInWad, _tokenAdapter, _data);
-        // Withdraws token amount to the user's wallet as a token
-        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _amount, _data);
+
+        adjustPosition(_manager, _positionId, -_safeToInt(_amountInWad), 0, _tokenAdapter, _data); // Unlocks token amount from the position
+        moveCollateral(_manager, _positionId, address(this), _amountInWad, _tokenAdapter, _data); // Moves the amount from the position to proxy's address
+        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _amount, _data); // Withdraws token amount to the user's wallet as a token
+        IManager(_manager).updatePrice(IManager(_manager).collateralPools(_positionId));
     }
 
-    function withdrawBNB(
+    function withdrawXDC(
         address _manager,
-        address _bnbAdapter,
+        address _xdcAdapter,
         uint256 _positionId,
         uint256 _amount, // [wad]
         bytes calldata _data
     ) external {
-        // Moves the amount from the position to proxy's address
-        moveCollateral(_manager, _positionId, address(this), _amount, _bnbAdapter, _data);
-
-        // Withdraws WBNB amount to proxy address as a token
-        IGenericTokenAdapter(_bnbAdapter).withdraw(address(this), _amount, _data);
-        // Converts WBNB to BNB
-        IWBNB(address(IGenericTokenAdapter(_bnbAdapter).collateralToken())).withdraw(_amount);
-        // Sends BNB back to the user's wallet
-        SafeToken.safeTransferETH(msg.sender, _amount);
+        moveCollateral(_manager, _positionId, address(this), _amount, _xdcAdapter, _data); // Moves the amount from the position to proxy's address
+        IGenericTokenAdapter(_xdcAdapter).withdraw(address(this), _amount, _data); // Withdraws WXDC amount to proxy address as a token
+        IWXDC(address(IGenericTokenAdapter(_xdcAdapter).collateralToken())).withdraw(_amount); // Converts WXDC to XDC
+        SafeToken.safeTransferETH(msg.sender, _amount); // Sends XDC back to the user's wallet
+        IManager(_manager).updatePrice(IManager(_manager).collateralPools(_positionId));
     }
 
     function withdrawToken(
@@ -493,11 +438,9 @@ contract AlpacaStablecoinProxyActions {
         uint256 _amount, // [in token decimal]
         bytes calldata _data
     ) external {
-        // Moves the amount from the position to proxy's address
-        moveCollateral(_manager, _positionId, address(this), convertTo18(_tokenAdapter, _amount), _tokenAdapter, _data);
-
-        // Withdraws token amount to the user's wallet as a token
-        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _amount, _data);
+        moveCollateral(_manager, _positionId, address(this), convertTo18(_tokenAdapter, _amount), _tokenAdapter, _data); // Moves the amount from the position to proxy's address
+        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _amount, _data); // Withdraws token amount to the user's wallet as a token
+        IManager(_manager).updatePrice(IManager(_manager).collateralPools(_positionId));
     }
 
     function draw(
@@ -521,14 +464,16 @@ contract AlpacaStablecoinProxyActions {
             _tokenAdapter,
             _data
         );
-        // Moves the Alpaca Stablecoin amount (balance in the bookKeeper in rad) to proxy's address
-        moveStablecoin(_manager, _positionId, address(this), _toRad(_amount));
-        // Allows adapter to access to proxy's Alpaca Stablecoin balance in the bookKeeper
+
+        moveStablecoin(_manager, _positionId, address(this), _toRad(_amount)); // Moves the Fathom Stablecoin amount (balance in the bookKeeper in rad) to proxy's address
+
+        // Allows adapter to access to proxy's Fathom Stablecoin balance in the bookKeeper
         if (IBookKeeper(_bookKeeper).positionWhitelist(address(this), address(_stablecoinAdapter)) == 0) {
             IBookKeeper(_bookKeeper).whitelist(_stablecoinAdapter);
         }
-        // Withdraws Alpaca Stablecoin to the user's wallet as a token
-        IStablecoinAdapter(_stablecoinAdapter).withdraw(msg.sender, _amount, _data);
+
+        IStablecoinAdapter(_stablecoinAdapter).withdraw(msg.sender, _amount, _data); // Withdraws Fathom Stablecoin to the user's wallet as a token
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
     function wipe(
@@ -545,8 +490,7 @@ contract AlpacaStablecoinProxyActions {
 
         address owner = IManager(_manager).owners(_positionId);
         if (owner == address(this) || IManager(_manager).ownerWhitelist(owner, _positionId, address(this)) == 1) {
-            // Deposits Alpaca Stablecoin amount into the bookKeeper
-            stablecoinAdapterDeposit(_stablecoinAdapter, _positionAddress, _amount, _data);
+            stablecoinAdapterDeposit(_stablecoinAdapter, _positionAddress, _amount, _data); // Deposits Fathom Stablecoin amount into the bookKeeper
             // Paybacks debt to the CDP
             adjustPosition(
                 _manager,
@@ -562,10 +506,8 @@ contract AlpacaStablecoinProxyActions {
                 _data
             );
         } else {
-            // Deposits Alpaca Stablecoin amount into the bookKeeper
-            stablecoinAdapterDeposit(_stablecoinAdapter, address(this), _amount, _data);
-            // Paybacks debt to the position
-            int256 _wipeDebtShare = _getWipeDebtShare(_bookKeeper, _amount * RAY, _positionAddress, _collateralPoolId);
+            stablecoinAdapterDeposit(_stablecoinAdapter, address(this), _amount, _data); // Deposits Fathom Stablecoin amount into the bookKeeper
+            int256 _wipeDebtShare = _getWipeDebtShare(_bookKeeper, _amount * RAY, _positionAddress, _collateralPoolId); // Paybacks debt to the position
             IBookKeeper(_bookKeeper).adjustPosition(
                 _collateralPoolId,
                 _positionAddress,
@@ -575,6 +517,7 @@ contract AlpacaStablecoinProxyActions {
                 _wipeDebtShare
             );
         }
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
     function safeWipe(
@@ -604,24 +547,22 @@ contract AlpacaStablecoinProxyActions {
 
         address _owner = IManager(_manager).owners(_positionId);
         if (_owner == address(this) || IManager(_manager).ownerWhitelist(_owner, _positionId, address(this)) == 1) {
-            // Deposits Alpaca Stablecoin amount into the bookKeeper
+            // Deposits Fathom Stablecoin amount into the bookKeeper
             stablecoinAdapterDeposit(
                 _stablecoinAdapter,
                 _positionAddress,
                 _getWipeAllStablecoinAmount(_bookKeeper, _positionAddress, _positionAddress, _collateralPoolId),
                 _data
             );
-            // Paybacks debt to the CDP
-            adjustPosition(_manager, _positionId, 0, -int256(_debtShare), _tokenAdapter, _data);
+            adjustPosition(_manager, _positionId, 0, -int256(_debtShare), _tokenAdapter, _data); // Paybacks debt to the CDP
         } else {
-            // Deposits Alpaca Stablecoin amount into the bookKeeper
+            // Deposits Fathom Stablecoin amount into the bookKeeper
             stablecoinAdapterDeposit(
                 _stablecoinAdapter,
                 address(this),
                 _getWipeAllStablecoinAmount(_bookKeeper, address(this), _positionAddress, _collateralPoolId),
                 _data
             );
-            // Paybacks debt to the position
             IBookKeeper(_bookKeeper).adjustPosition(
                 _collateralPoolId,
                 _positionAddress,
@@ -629,8 +570,9 @@ contract AlpacaStablecoinProxyActions {
                 address(this),
                 0,
                 -int256(_debtShare)
-            );
+            ); // Paybacks debt to the position
         }
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
     function safeWipeAll(
@@ -645,10 +587,10 @@ contract AlpacaStablecoinProxyActions {
         wipeAll(_manager, _tokenAdapter, _stablecoinAdapter, _positionId, _data);
     }
 
-    function lockBNBAndDraw(
+    function lockXDCAndDraw(
         address _manager,
         address _stabilityFeeCollector,
-        address _bnbAdapter,
+        address _xdcAdapter,
         address _stablecoinAdapter,
         uint256 _positionId,
         uint256 _stablecoinAmount, // [wad]
@@ -657,9 +599,8 @@ contract AlpacaStablecoinProxyActions {
         address _positionAddress = IManager(_manager).positions(_positionId);
         address _bookKeeper = IManager(_manager).bookKeeper();
         bytes32 _collateralPoolId = IManager(_manager).collateralPools(_positionId);
-        // Receives BNB amount, converts it to WBNB and joins it into the bookKeeper
-        bnbAdapterDeposit(_bnbAdapter, _positionAddress, _data);
-        // Locks WBNB amount into the CDP and generates debt
+        xdcAdapterDeposit(_xdcAdapter, _positionAddress, _data); // Receives XDC amount, converts it to WXDC and joins it into the bookKeeper
+        // Locks WXDC amount into the CDP and generates debt
         adjustPosition(
             _manager,
             _positionId,
@@ -671,34 +612,32 @@ contract AlpacaStablecoinProxyActions {
                 _collateralPoolId,
                 _stablecoinAmount
             ),
-            _bnbAdapter,
+            _xdcAdapter,
             _data
         );
-        // Moves the Alpaca Stablecoin amount (balance in the bookKeeper in rad) to proxy's address
-        moveStablecoin(_manager, _positionId, address(this), _toRad(_stablecoinAmount));
-        // Allows adapter to access to proxy's Alpaca Stablecoin balance in the bookKeeper
+        moveStablecoin(_manager, _positionId, address(this), _toRad(_stablecoinAmount)); // Moves the Fathom Stablecoin amount (balance in the bookKeeper in rad) to proxy's address
+        // Allows adapter to access to proxy's Fathom Stablecoin balance in the bookKeeper
         if (IBookKeeper(_bookKeeper).positionWhitelist(address(this), address(_stablecoinAdapter)) == 0) {
             IBookKeeper(_bookKeeper).whitelist(_stablecoinAdapter);
         }
-        // Withdraws Alpaca Stablecoin to the user's wallet as a token
-        IStablecoinAdapter(_stablecoinAdapter).withdraw(msg.sender, _stablecoinAmount, _data);
+        IStablecoinAdapter(_stablecoinAdapter).withdraw(msg.sender, _stablecoinAmount, _data); // Withdraws Fathom Stablecoin to the user's wallet as a token
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
-    /// @notice
-    function openLockBNBAndDraw(
+    function openLockXDCAndDraw(
         address _manager,
         address _stabilityFeeCollector,
-        address _bnbAdapter,
+        address _xdcAdapter,
         address _stablecoinAdapter,
         bytes32 _collateralPoolId,
         uint256 _stablecoinAmount, // [wad]
         bytes calldata _data
     ) external payable returns (uint256 _positionId) {
         _positionId = open(_manager, _collateralPoolId, address(this));
-        lockBNBAndDraw(
+        lockXDCAndDraw(
             _manager,
             _stabilityFeeCollector,
-            _bnbAdapter,
+            _xdcAdapter,
             _stablecoinAdapter,
             _positionId,
             _stablecoinAmount,
@@ -718,26 +657,25 @@ contract AlpacaStablecoinProxyActions {
         bytes calldata _data
     ) public {
         bytes32 _collateralPoolId = _manager.collateralPools(_positionId);
-        // Takes token amount from user's wallet and joins into the bookKeeper
-        tokenAdapterDeposit(_tokenAdapter, _manager.positions(_positionId), _collateralAmount, _transferFrom, _data);
-        // Locks token amount into the position and generates debt
-        int256 _collateralAmountInWad = _safeToInt(convertTo18(_tokenAdapter, _collateralAmount));
+        tokenAdapterDeposit(_tokenAdapter, _manager.positions(_positionId), _collateralAmount, _transferFrom, _data); // Takes token amount from user's wallet and joins into the bookKeeper
+        int256 _collateralAmountInWad = _safeToInt(convertTo18(_tokenAdapter, _collateralAmount)); // Locks token amount into the position and generates debt
+
         int256 _drawDebtShare = _getDrawDebtShare(
             _manager.bookKeeper(),
             _stabilityFeeCollector,
             _manager.positions(_positionId),
             _collateralPoolId,
-            _stablecoinAmount
+            _stablecoinAmount //
         ); // [wad]
+
         adjustPosition(address(_manager), _positionId, _collateralAmountInWad, _drawDebtShare, _tokenAdapter, _data);
-        // Moves the Alpaca Stablecoin amount (balance in the bookKeeper in rad) to proxy's address
-        moveStablecoin(address(_manager), _positionId, address(this), _toRad(_stablecoinAmount));
-        // Allows adapter to access to proxy's Alpaca Stablecoin balance in the bookKeeper
+        moveStablecoin(address(_manager), _positionId, address(this), _toRad(_stablecoinAmount)); // Moves the Fathom Stablecoin amount (balance in the bookKeeper in rad) to proxy's address
+        // Allows adapter to access to proxy's Fathom Stablecoin balance in the bookKeeper
         if (IBookKeeper(_manager.bookKeeper()).positionWhitelist(address(this), address(_stablecoinAdapter)) == 0) {
             IBookKeeper(_manager.bookKeeper()).whitelist(_stablecoinAdapter);
         }
-        // Withdraws Alpaca Stablecoin to the user's wallet as a token
-        IStablecoinAdapter(_stablecoinAdapter).withdraw(msg.sender, _stablecoinAmount, _data);
+        IStablecoinAdapter(_stablecoinAdapter).withdraw(msg.sender, _stablecoinAmount, _data); // Withdraws Fathom Stablecoin to the user's wallet as a token
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
     function openLockTokenAndDraw(
@@ -802,18 +740,18 @@ contract AlpacaStablecoinProxyActions {
         );
     }
 
-    function convertBNBAndLockToken(
+    function convertXDCAndLockToken(
         address _vault,
         address _manager,
         address _tokenAdapter,
         uint256 _positionId,
         bytes calldata _data
     ) external payable {
-        uint256 _collateralAmount = bnbToIbBNB(_vault, msg.value, false);
+        uint256 _collateralAmount = xdcToIbXDC(_vault, msg.value, false);
         lockToken(_manager, _tokenAdapter, _positionId, _collateralAmount, false, _data);
     }
 
-    function convertBNBLockTokenAndDraw(
+    function convertXDCLockTokenAndDraw(
         address _vault,
         IManager _manager,
         address _stabilityFeeCollector,
@@ -823,7 +761,7 @@ contract AlpacaStablecoinProxyActions {
         uint256 _stablecoinAmount, // [wad]
         bytes calldata _data
     ) external payable {
-        uint256 _collateralAmount = bnbToIbBNB(_vault, msg.value, false);
+        uint256 _collateralAmount = xdcToIbXDC(_vault, msg.value, false);
         lockTokenAndDraw(
             IManager(_manager),
             _stabilityFeeCollector,
@@ -837,7 +775,7 @@ contract AlpacaStablecoinProxyActions {
         );
     }
 
-    function convertBNBOpenLockTokenAndDraw(
+    function convertXDCOpenLockTokenAndDraw(
         address _vault,
         address _manager,
         address _stabilityFeeCollector,
@@ -847,7 +785,7 @@ contract AlpacaStablecoinProxyActions {
         uint256 _stablecoinAmount, // [wad]
         bytes calldata _data
     ) external payable returns (uint256 positionId) {
-        uint256 _collateralAmount = bnbToIbBNB(_vault, msg.value, false);
+        uint256 _collateralAmount = xdcToIbXDC(_vault, msg.value, false);
         return
             openLockTokenAndDraw(
                 _manager,
@@ -888,9 +826,9 @@ contract AlpacaStablecoinProxyActions {
             );
     }
 
-    function wipeAndUnlockBNB(
+    function wipeAndUnlockXDC(
         address _manager,
-        address _bnbAdapter,
+        address _xdcAdapter,
         address _stablecoinAdapter,
         uint256 _positionId,
         uint256 _collateralAmount, // [wad]
@@ -898,29 +836,26 @@ contract AlpacaStablecoinProxyActions {
         bytes calldata _data
     ) external {
         address _positionAddress = IManager(_manager).positions(_positionId);
-        // Deposits Alpaca Stablecoin amount into the bookKeeper
-        stablecoinAdapterDeposit(_stablecoinAdapter, _positionAddress, _stablecoinAmount, _data);
-        // Paybacks debt to the position and unlocks WBNB amount from it
+        bytes32 _collateralPoolId = IManager(_manager).collateralPools(_positionId);
+        stablecoinAdapterDeposit(_stablecoinAdapter, _positionAddress, _stablecoinAmount, _data); // Deposits Fathom Stablecoin amount into the bookKeeper
+        // Paybacks debt to the position and unlocks WXDC amount from it
         int256 _wipeDebtShare = _getWipeDebtShare(
             IManager(_manager).bookKeeper(),
             IBookKeeper(IManager(_manager).bookKeeper()).stablecoin(_positionAddress),
             _positionAddress,
-            IManager(_manager).collateralPools(_positionId)
+            _collateralPoolId
         ); // [wad]
-        adjustPosition(_manager, _positionId, -_safeToInt(_collateralAmount), _wipeDebtShare, _bnbAdapter, _data);
-        // Moves the amount from the position to proxy's address
-        moveCollateral(_manager, _positionId, address(this), _collateralAmount, _bnbAdapter, _data);
-        // Withdraws WBNB amount to proxy address as a token
-        IGenericTokenAdapter(_bnbAdapter).withdraw(address(this), _collateralAmount, _data);
-        // Converts WBNB to BNB
-        IWBNB(address(IGenericTokenAdapter(_bnbAdapter).collateralToken())).withdraw(_collateralAmount);
-        // Sends BNB back to the user's wallet
-        SafeToken.safeTransferETH(msg.sender, _collateralAmount);
+        adjustPosition(_manager, _positionId, -_safeToInt(_collateralAmount), _wipeDebtShare, _xdcAdapter, _data);
+        moveCollateral(_manager, _positionId, address(this), _collateralAmount, _xdcAdapter, _data); // Moves the amount from the position to proxy's address
+        IGenericTokenAdapter(_xdcAdapter).withdraw(address(this), _collateralAmount, _data); // Withdraws WXDC amount to proxy address as a token
+        IWXDC(address(IGenericTokenAdapter(_xdcAdapter).collateralToken())).withdraw(_collateralAmount); // Converts WXDC to XDC
+        SafeToken.safeTransferETH(msg.sender, _collateralAmount); // Sends XDC back to the user's wallet
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
-    function wipeAllAndUnlockBNB(
+    function wipeAllAndUnlockXDC(
         address _manager,
-        address _bnbAdapter,
+        address _xdcAdapter,
         address _stablecoinAdapter,
         uint256 _positionId,
         uint256 _collateralAmount, // [wad]
@@ -931,23 +866,19 @@ contract AlpacaStablecoinProxyActions {
         bytes32 _collateralPoolId = IManager(_manager).collateralPools(_positionId);
         (, uint256 _debtShare) = IBookKeeper(_bookKeeper).positions(_collateralPoolId, _positionAddress); // [wad]
 
-        // Deposits Alpaca Stablecoin amount into the bookKeeper
+        // Deposits Fathom Stablecoin amount into the bookKeeper
         stablecoinAdapterDeposit(
             _stablecoinAdapter,
             _positionAddress,
             _getWipeAllStablecoinAmount(_bookKeeper, _positionAddress, _positionAddress, _collateralPoolId),
             _data
         );
-        // Paybacks debt to the CDP and unlocks WBNB amount from it
-        adjustPosition(_manager, _positionId, -_safeToInt(_collateralAmount), -int256(_debtShare), _bnbAdapter, _data);
-        // Moves the amount from the CDP positionAddress to proxy's address
-        moveCollateral(_manager, _positionId, address(this), _collateralAmount, _bnbAdapter, _data);
-        // Withdraws WBNB amount to proxy address as a token
-        IGenericTokenAdapter(_bnbAdapter).withdraw(address(this), _collateralAmount, _data);
-        // Converts WBNB to BNB
-        IWBNB(address(IGenericTokenAdapter(_bnbAdapter).collateralToken())).withdraw(_collateralAmount);
-        // Sends BNB back to the user's wallet
-        SafeToken.safeTransferETH(msg.sender, _collateralAmount);
+        adjustPosition(_manager, _positionId, -_safeToInt(_collateralAmount), -int256(_debtShare), _xdcAdapter, _data); // Paybacks debt to the CDP and unlocks WXDC amount from it
+        moveCollateral(_manager, _positionId, address(this), _collateralAmount, _xdcAdapter, _data); // Moves the amount from the CDP positionAddress to proxy's address
+        IGenericTokenAdapter(_xdcAdapter).withdraw(address(this), _collateralAmount, _data); // Withdraws WXDC amount to proxy address as a token
+        IWXDC(address(IGenericTokenAdapter(_xdcAdapter).collateralToken())).withdraw(_collateralAmount); // Converts WXDC to XDC
+        SafeToken.safeTransferETH(msg.sender, _collateralAmount); // Sends XDC back to the user's wallet
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
     function wipeAndUnlockToken(
@@ -960,15 +891,15 @@ contract AlpacaStablecoinProxyActions {
         bytes calldata _data
     ) public {
         address _positionAddress = IManager(_manager).positions(_positionId);
-        // Deposits Alpaca Stablecoin amount into the bookKeeper
-        stablecoinAdapterDeposit(_stablecoinAdapter, _positionAddress, _stablecoinAmount, _data);
+        bytes32 _collateralPoolId = IManager(_manager).collateralPools(_positionId);
+        stablecoinAdapterDeposit(_stablecoinAdapter, _positionAddress, _stablecoinAmount, _data); // Deposits Fathom Stablecoin amount into the bookKeeper
         uint256 _collateralAmountInWad = convertTo18(_tokenAdapter, _collateralAmount);
         // Paybacks debt to the CDP and unlocks token amount from it
         int256 _wipeDebtShare = _getWipeDebtShare(
             IManager(_manager).bookKeeper(),
             IBookKeeper(IManager(_manager).bookKeeper()).stablecoin(_positionAddress),
             _positionAddress,
-            IManager(_manager).collateralPools(_positionId)
+            _collateralPoolId
         );
         adjustPosition(
             _manager,
@@ -978,13 +909,12 @@ contract AlpacaStablecoinProxyActions {
             _tokenAdapter,
             _data
         );
-        // Moves the amount from the position to proxy's address
-        moveCollateral(_manager, _positionId, address(this), _collateralAmountInWad, _tokenAdapter, _data);
-        // Withdraws token amount to the user's wallet as a token
-        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _collateralAmount, _data);
+        moveCollateral(_manager, _positionId, address(this), _collateralAmountInWad, _tokenAdapter, _data); // Moves the amount from the position to proxy's address
+        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _collateralAmount, _data); // Withdraws token amount to the user's wallet as a token
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
-    function wipeUnlockIbBNBAndCovertToBNB(
+    function wipeUnlockIbXDCAndCovertToXDC(
         address _vault,
         address _manager,
         address _tokenAdapter,
@@ -1003,7 +933,7 @@ contract AlpacaStablecoinProxyActions {
             _stablecoinAmount,
             _data
         );
-        ibBNBToBNB(_vault, _collateralAmount);
+        ibXDCToXDC(_vault, _collateralAmount);
     }
 
     function wipeUnlockTokenAndConvert(
@@ -1040,8 +970,7 @@ contract AlpacaStablecoinProxyActions {
         address _positionAddress = IManager(_manager).positions(_positionId);
         bytes32 _collateralPoolId = IManager(_manager).collateralPools(_positionId);
         (, uint256 _debtShare) = IBookKeeper(_bookKeeper).positions(_collateralPoolId, _positionAddress);
-
-        // Deposits Alpaca Stablecoin amount into the bookKeeper
+        // Deposits Fathom Stablecoin amount into the bookKeeper
         stablecoinAdapterDeposit(
             _stablecoinAdapter,
             _positionAddress,
@@ -1049,7 +978,6 @@ contract AlpacaStablecoinProxyActions {
             _data
         );
         uint256 _collateralAmountInWad = convertTo18(_tokenAdapter, _collateralAmount);
-        // Paybacks debt to the position and unlocks token amount from it
         adjustPosition(
             _manager,
             _positionId,
@@ -1058,13 +986,12 @@ contract AlpacaStablecoinProxyActions {
             _tokenAdapter,
             _data
         );
-        // Moves the amount from the position to proxy's address
-        moveCollateral(_manager, _positionId, address(this), _collateralAmountInWad, _tokenAdapter, _data);
-        // Withdraws token amount to the user's wallet as a token
-        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _collateralAmount, _data);
+        moveCollateral(_manager, _positionId, address(this), _collateralAmountInWad, _tokenAdapter, _data); // Moves the amount from the position to proxy's address
+        IGenericTokenAdapter(_tokenAdapter).withdraw(msg.sender, _collateralAmount, _data); // Withdraws token amount to the user's wallet as a token
+        IManager(_manager).updatePrice(_collateralPoolId);
     }
 
-    function wipeAllUnlockIbBNBAndConvertToBNB(
+    function wipeAllUnlockIbXDCAndConvertToXDC(
         address _vault,
         address _manager,
         address _tokenAdapter,
@@ -1074,7 +1001,7 @@ contract AlpacaStablecoinProxyActions {
         bytes calldata _data
     ) external {
         wipeAllAndUnlockToken(_manager, _tokenAdapter, _stablecoinAdapter, _positionId, _collateralAmount, _data);
-        ibBNBToBNB(_vault, _collateralAmount);
+        ibXDCToXDC(_vault, _collateralAmount);
     }
 
     function wipeAllUnlockTokenAndConvert(

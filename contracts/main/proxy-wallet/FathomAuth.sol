@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+pragma solidity 0.8.17;
 
-pragma solidity 0.6.12;
+import '../interfaces/IAuthority.sol';
 
-import '../interfaces/IAuth.sol';
-
-contract AlpacaAuthEvents {
+contract FathomAuthEvents {
     event LogSetAuthority(address indexed _authority);
     event LogSetOwner(address indexed _owner);
 }
 
-contract AlpacaAuth is AlpacaAuthEvents {
+contract FathomAuth is FathomAuthEvents {
     IAuthority public authority;
     address public owner;
 
-    constructor() public {
+    constructor() {
         owner = msg.sender;
         emit LogSetOwner(msg.sender);
     }
@@ -29,7 +28,7 @@ contract AlpacaAuth is AlpacaAuthEvents {
     }
 
     modifier auth() {
-        require(isAuthorized(msg.sender, msg.sig), 'alpaca-auth-unauthorized');
+        require(isAuthorized(msg.sender, msg.sig), 'fathom-auth-unauthorized');
         _;
     }
 

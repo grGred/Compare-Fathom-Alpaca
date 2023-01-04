@@ -1,23 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/**
-  ∩~~~~∩ 
-  ξ ･×･ ξ 
-  ξ　~　ξ 
-  ξ　　 ξ 
-  ξ　　 “~～~～〇 
-  ξ　　　　　　 ξ 
-  ξ ξ ξ~～~ξ ξ ξ 
-　 ξ_ξξ_ξ　ξ_ξξ_ξ
-Alpaca Fin Corporation
-*/
+pragma solidity 0.8.17;
 
-pragma solidity 0.6.12;
-pragma experimental ABIEncoderV2;
-
-import '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol';
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/utils/math/SafeMathUpgradeable.sol';
 
 import '../../interfaces/IBookKeeper.sol';
 import '../../interfaces/IPriceFeed.sol';
@@ -52,21 +39,13 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         uint256 treasuryFeesBps;
     }
 
-    // --- Data ---
     IBookKeeper public bookKeeper; // Core CDP Engine
     ILiquidationEngine public liquidationEngine; // Liquidation module
-    ISystemDebtEngine public systemDebtEngine; // Recipient of AUSD raised in auctions
+    ISystemDebtEngine public systemDebtEngine; // Recipient of FUSD raised in auctions
     IPriceOracle public priceOracle; // Collateral price module
 
     uint256 public flashLendingEnabled;
 
-    /// @param _positionCollateralAmount [wad]
-    /// @param _debtShareToBeLiquidated [wad]
-    /// @param _maxDebtShareToBeLiquidated [wad]
-    /// @param _actualDebtShareToBeLiquidated [wad]
-    /// @param _actualDebtValueToBeLiquidated [rad]
-    /// @param _collateralAmountToBeLiquidated [wad]
-    /// @param _treasuryFees [wad]
     event LogFixedSpreadLiquidate(
         bytes32 indexed _collateralPoolId,
         uint256 _positionDebtShare,
@@ -81,7 +60,6 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         uint256 _collateralAmountToBeLiquidated,
         uint256 _treasuryFees
     );
-
     event LogSetFlashLendingEnabled(address indexed caller, uint256 _flashLendingEnabled);
 
     modifier onlyOwnerOrGov() {
@@ -94,7 +72,6 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         _;
     }
 
-    // --- Init ---
     function initialize(
         address _bookKeeper,
         address _priceOracle,
@@ -117,7 +94,6 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         systemDebtEngine = ISystemDebtEngine(_systemDebtEngine);
     }
 
-    // --- Math ---
     uint256 constant BLN = 10**9;
     uint256 constant WAD = 10**18;
     uint256 constant RAY = 10**27;
@@ -131,15 +107,12 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         z = mul(x, RAY) / y;
     }
 
-    // --- Setter ---
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function setFlashLendingEnabled(uint256 _flashLendingEnabled) external onlyOwnerOrGov {
         flashLendingEnabled = _flashLendingEnabled;
         emit LogSetFlashLendingEnabled(msg.sender, _flashLendingEnabled);
     }
 
-    // get the price directly from the PriceOracle
-    function getFeedPrice(bytes32 collateralPoolId) internal view returns (uint256 feedPrice) {
+    function getFeedPrice(bytes32 collateralPoolId) internal returns (uint256 feedPrice) {
         address _priceFeedAddress = ICollateralPoolConfig(bookKeeper.collateralPoolConfig()).getPriceFeed(
             collateralPoolId
         );
@@ -173,66 +146,41 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
 
         uint256 _positionDebtValue = _positionDebtShare.mul(_vars.debtAccumulatedRate);
 
-        // Calculate max liquidatable debt value based on the close factor
-        // (_positionDebtShare [wad] * closeFactorBps [bps]) / 10000
         require(_vars.closeFactorBps > 0, 'FixedSpreadLiquidationStrategy/close-factor-bps-not-set');
         info.maxLiquidatableDebtShare = _positionDebtShare.mul(_vars.closeFactorBps).div(10000); // [wad]
 
-        // Choose to use the minimum amount between `_debtValueToBeLiquidated` and `_maxLiquidatableDebtShare`
-        // to not exceed the close factor
         info.actualDebtShareToBeLiquidated = _debtShareToBeLiquidated > info.maxLiquidatableDebtShare
             ? info.maxLiquidatableDebtShare
             : _debtShareToBeLiquidated; // [wad]
-        // actualDebtShareToBeLiquidated [wad] * _debtAccumulatedRate [ray]
         info.actualDebtValueToBeLiquidated = info.actualDebtShareToBeLiquidated.mul(_vars.debtAccumulatedRate); // [rad]
 
-        // Calculate the max collateral amount to be liquidated by taking all the fees into account
-        // ( actualDebtValueToBeLiquidated [rad] * liquidatorIncentiveBps [bps] / 10000 / _currentCollateralPrice [ray]
         uint256 _maxCollateralAmountToBeLiquidated = info
             .actualDebtValueToBeLiquidated
             .mul(_vars.liquidatorIncentiveBps)
             .div(10000)
             .div(_currentCollateralPrice); // [wad]
 
-        // If the calculated collateral amount to be liquidated exceeds the position collateral amount,
-        // then we need to recalculate the debt value to be liquidated that would be enough to liquidate the position entirely
-        // Or if the remaining collateral or the remaining debt is very small and smaller than `debtFloor`, we will force full collateral liquidation
         if (
-            // If the max collateral amount (including liquidator incentive) that should be liquidated exceeds the total collateral amount of that position
             _maxCollateralAmountToBeLiquidated > _positionCollateralAmount ||
-            // If the remaining collateral amount value in stablecoin is smaller than `debtFloor`
-            // (_positionCollateralAmount [wad] - _maxCollateralAmountToBeLiquidated [wad]) * _currentCollateralPrice [ray] = [rad]
             _positionCollateralAmount.sub(_maxCollateralAmountToBeLiquidated).mul(_currentCollateralPrice) <
             _positionDebtValue.sub(info.actualDebtValueToBeLiquidated)
         ) {
-            // Full Collateral Liquidation
-            // Take all collateral amount of the position
             info.collateralAmountToBeLiquidated = _positionCollateralAmount;
-
-            // Calculate how much debt value to be liquidated should be
-            // based on the entire collateral amount of the position
-            // (_currentCollateralPrice [ray] * _positionCollateralAmount [wad]) * 10000 / liquidatorIncentiveBps [bps])
-
             info.actualDebtValueToBeLiquidated = _currentCollateralPrice.mul(_positionCollateralAmount).mul(10000).div(
                 _vars.liquidatorIncentiveBps
             ); // [rad]
         } else {
-            // If the remaining debt after liquidation is smaller than `debtFloor`
             if (
                 _positionDebtValue > info.actualDebtValueToBeLiquidated &&
                 _positionDebtValue.sub(info.actualDebtValueToBeLiquidated) < _vars.debtFloor
             ) {
-                // Full Debt Liquidation
                 info.actualDebtValueToBeLiquidated = _positionDebtValue; // [rad]
-
-                // actualDebtValueToBeLiquidated [rad] * liquidatorIncentiveBps [bps] / 10000 / _currentCollateralPrice [ray] /
                 info.collateralAmountToBeLiquidated = info
                     .actualDebtValueToBeLiquidated
                     .mul(_vars.liquidatorIncentiveBps)
                     .div(10000)
                     .div(_currentCollateralPrice); // [wad]
             } else {
-                // Partial Liquidation
                 info.collateralAmountToBeLiquidated = _maxCollateralAmountToBeLiquidated; // [wad]
             }
         }
@@ -240,10 +188,13 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         info.actualDebtShareToBeLiquidated = info.actualDebtValueToBeLiquidated.div(_vars.debtAccumulatedRate); // [wad]
 
         // collateralAmountToBeLiquidated - (collateralAmountToBeLiquidated * 10000 / liquidatorIncentiveBps)
+        // 1 - (1 * 10000 / 10500) = 0.047619048 which is roughly around 0.05
         uint256 liquidatorIncentiveCollectedFromPosition = info.collateralAmountToBeLiquidated.sub(
             info.collateralAmountToBeLiquidated.mul(10000).div(_vars.liquidatorIncentiveBps)
         ); // [wad]
 
+        // liquidatorIncentiveCollectedFromPosition * (treasuryFeesBps) / 10000
+        // 0.047619048 * 5000 / 10000
         info.treasuryFees = liquidatorIncentiveCollectedFromPosition.mul(_vars.treasuryFeesBps).div(10000); // [wad]
     }
 
@@ -266,16 +217,13 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
             '!liquidationEngingRole'
         );
 
-        // Input validation
         require(_positionDebtShare > 0, 'FixedSpreadLiquidationStrategy/zero-debt');
         require(_positionCollateralAmount > 0, 'FixedSpreadLiquidationStrategy/zero-collateral-amount');
         require(_positionAddress != address(0), 'FixedSpreadLiquidationStrategy/zero-position-address');
 
-        // 1. Get current collateral price from Oracle
         uint256 _currentCollateralPrice = getFeedPrice(_collateralPoolId); // [ray]
         require(_currentCollateralPrice > 0, 'FixedSpreadLiquidationStrategy/zero-collateral-price');
 
-        // 2.. Calculate collateral amount to be liquidated according to the current price and liquidator incentive
         LiquidationInfo memory info = _calculateLiquidationInfo(
             _collateralPoolId,
             _debtShareToBeLiquidated,
@@ -284,13 +232,10 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
             _positionDebtShare
         );
 
-        // 4. Confiscate position
-        // Slippage check
         require(
             info.actualDebtShareToBeLiquidated <= _maxDebtShareToBeLiquidated,
             'FixedSpreadLiquidationStrategy/exceed-max-debt-value-to-be-liquidated'
         );
-        // Overflow check
         require(
             info.collateralAmountToBeLiquidated < 2**255 && info.actualDebtShareToBeLiquidated < 2**255,
             'FixedSpreadLiquidationStrategy/overflow'
@@ -308,7 +253,6 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         );
         _adapter.onMoveCollateral(_positionAddress, address(this), info.collateralAmountToBeLiquidated, abi.encode(0));
 
-        // 5. Give the collateral to the collateralRecipient
         bookKeeper.moveCollateral(
             _collateralPoolId,
             address(this),
@@ -322,15 +266,11 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
             abi.encode(0)
         );
 
-        // 6. Give the treasury fees to System Debt Engine to be stored as system surplus
         if (info.treasuryFees > 0) {
             bookKeeper.moveCollateral(_collateralPoolId, address(this), address(systemDebtEngine), info.treasuryFees);
             _adapter.onMoveCollateral(address(this), address(systemDebtEngine), info.treasuryFees, abi.encode(0));
         }
 
-        // 7. Do external call (if data is defined) but to be
-        // extremely careful we don't allow to do it to the two
-        // contracts which the FixedSpreadLiquidationStrategy needs to be authorized
         if (
             flashLendingEnabled == 1 &&
             _data.length > 0 &&
@@ -345,7 +285,6 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
             );
         }
 
-        // Get Alpaca Stablecoin from the liquidator for debt repayment
         bookKeeper.moveStablecoin(_liquidatorAddress, address(systemDebtEngine), info.actualDebtValueToBeLiquidated);
 
         info.positionDebtShare = _positionDebtShare;
@@ -368,13 +307,10 @@ contract FixedSpreadLiquidationStrategy is PausableUpgradeable, ReentrancyGuardU
         );
     }
 
-    // --- pause ---
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function pause() external onlyOwnerOrGov {
         _pause();
     }
 
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function unpause() external onlyOwnerOrGov {
         _unpause();
     }

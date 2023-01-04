@@ -1,49 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/**
-  ∩~~~~∩ 
-  ξ ･×･ ξ 
-  ξ　~　ξ 
-  ξ　　 ξ 
-  ξ　　 “~～~～〇 
-  ξ　　　　　　 ξ 
-  ξ ξ ξ~～~ξ ξ ξ 
-　 ξ_ξξ_ξ　ξ_ξξ_ξ
-Alpaca Fin Corporation
-*/
+pragma solidity 0.8.17;
 
-pragma solidity 0.6.12;
-
-import '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol';
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol';
 
 import '../../interfaces/IBookKeeper.sol';
 import '../../interfaces/IToken.sol';
 import '../../interfaces/IGenericTokenAdapter.sol';
 import '../../interfaces/ICagable.sol';
 import '../../utils/SafeToken.sol';
-
-/*
-    Here we provide *adapters* to connect the BookKeeper to arbitrary external
-    token implementations, creating a bounded context for the BookKeeper. The
-    adapters here are provided as working examples:
-
-      - `TokenAdapter`: For well behaved ERC20 tokens, with simple transfer
-                   semantics.
-
-      - `StablecoinAdapter`: For connecting internal Alpaca Stablecoin balances to an external
-                   `AlpacaStablecoin` implementation.
-
-    In practice, adapter implementations will be varied and specific to
-    individual collateral types, accounting for different transfer
-    semantics and token standards.
-
-    Adapters need to implement two basic methods:
-
-      - `deposit`: enter token into the system
-      - `withdraw`: remove token from the system
-
-*/
 
 contract TokenAdapter is PausableUpgradeable, ReentrancyGuardUpgradeable, IGenericTokenAdapter, ICagable {
     using SafeToken for address;
@@ -96,23 +62,18 @@ contract TokenAdapter is PausableUpgradeable, ReentrancyGuardUpgradeable, IGener
         require(decimals == 18, 'TokenAdapter/bad-token-decimals');
     }
 
-    /// @dev access: OWNER_ROLE, SHOW_STOPPER_ROLE
     function cage() external override onlyOwnerOrShowStopper {
         require(live == 1, 'TokenAdapter/not-live');
         live = 0;
         emit LogCage();
     }
 
-    /// @dev access: OWNER_ROLE, SHOW_STOPPER_ROLE
     function uncage() external override onlyOwnerOrShowStopper {
         require(live == 0, 'TokenAdapter/not-caged');
         live = 1;
         emit LogUncage();
     }
 
-    /// @dev Deposit token into the system from the caller to be used as collateral
-    /// @param usr The source address which is holding the collateral token
-    /// @param wad The amount of collateral to be deposited [wad]
     function deposit(
         address usr,
         uint256 wad,
@@ -126,9 +87,6 @@ contract TokenAdapter is PausableUpgradeable, ReentrancyGuardUpgradeable, IGener
         address(collateralToken).safeTransferFrom(msg.sender, address(this), wad);
     }
 
-    /// @dev Withdraw token from the system to the caller
-    /// @param usr The destination address to receive collateral token
-    /// @param wad The amount of collateral to be withdrawn [wad]
     function withdraw(
         address usr,
         uint256 wad,
@@ -137,7 +95,6 @@ contract TokenAdapter is PausableUpgradeable, ReentrancyGuardUpgradeable, IGener
         require(wad < 2**255, 'TokenAdapter/overflow');
         bookKeeper.addCollateral(collateralPoolId, msg.sender, -int256(wad));
 
-        // Move the actual token
         address(collateralToken).safeTransfer(usr, wad);
     }
 
@@ -156,13 +113,10 @@ contract TokenAdapter is PausableUpgradeable, ReentrancyGuardUpgradeable, IGener
         bytes calldata data
     ) external override nonReentrant {}
 
-    // --- pause ---
-    /// @dev access: OWNER_ROLE, GOV_ROLE/// @dev access: OWNER_ROLE, GOV_ROLE
     function pause() external onlyOwnerOrGov {
         _pause();
     }
 
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function unpause() external onlyOwnerOrGov {
         _unpause();
     }

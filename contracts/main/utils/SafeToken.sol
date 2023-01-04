@@ -1,17 +1,4 @@
 // SPDX-License-Identifier: MIT
-/**
-  ∩~~~~∩
-  ξ ･×･ ξ
-  ξ　~　ξ
-  ξ　　 ξ
-  ξ　　 “~～~～〇
-  ξ　　　　　　 ξ
-  ξ ξ ξ~～~ξ ξ ξ
-　 ξ_ξξ_ξ　ξ_ξξ_ξ
-Alpaca Fin Corporation
-*/
-
-// solhint-disable avoid-low-level-calls
 pragma solidity >=0.6.6;
 
 interface ERC20Interface {
@@ -32,8 +19,7 @@ library SafeToken {
         address to,
         uint256 value
     ) internal {
-        // bytes4(keccak256(bytes('approve(address,uint256)')));
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0x095ea7b3, to, value));
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0x095ea7b3, to, value)); // bytes4(keccak256(bytes('approve(address,uint256)')));
         require(success && (data.length == 0 || abi.decode(data, (bool))), '!safeApprove');
     }
 
@@ -42,8 +28,7 @@ library SafeToken {
         address to,
         uint256 value
     ) internal {
-        // bytes4(keccak256(bytes('transfer(address,uint256)')));
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0xa9059cbb, to, value));
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0xa9059cbb, to, value)); // bytes4(keccak256(bytes('transfer(address,uint256)')));
         require(success && (data.length == 0 || abi.decode(data, (bool))), '!safeTransfer');
     }
 
@@ -53,8 +38,7 @@ library SafeToken {
         address to,
         uint256 value
     ) internal {
-        // bytes4(keccak256(bytes('transferFrom(address,address,uint256)')));
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0x23b872dd, from, to, value));
+        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0x23b872dd, from, to, value)); // bytes4(keccak256(bytes('transferFrom(address,address,uint256)')));
         require(success && (data.length == 0 || abi.decode(data, (bool))), '!safeTransferFrom');
     }
 

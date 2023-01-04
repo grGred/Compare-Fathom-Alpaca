@@ -1,17 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/**
-  ∩~~~~∩ 
-  ξ ･×･ ξ 
-  ξ　~　ξ 
-  ξ　　 ξ 
-  ξ　　 “~～~～〇 
-  ξ　　　　　　 ξ 
-  ξ ξ ξ~～~ξ ξ ξ 
-　 ξ_ξξ_ξ　ξ_ξξ_ξ
-Alpaca Fin Corporation
-*/
-
-pragma solidity 0.6.12;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
 
@@ -31,8 +19,6 @@ contract AccessControlConfig is AccessControlUpgradeable {
     function initialize() external initializer {
         AccessControlUpgradeable.__AccessControl_init();
 
-        // Grant the contract deployer the owner role: it will be able
-        // to grant and revoke any roles
         _setupRole(OWNER_ROLE, msg.sender);
     }
 }

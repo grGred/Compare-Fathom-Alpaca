@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-pragma solidity 0.6.12;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol';
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol';
 
 import '../../interfaces/IBookKeeper.sol';
 import '../../interfaces/IToken.sol';
@@ -13,8 +12,7 @@ import '../../interfaces/IAuthTokenAdapter.sol';
 import '../../interfaces/ICagable.sol';
 import '../../utils/SafeToken.sol';
 
-// Authed TokenAdapter for a token that has a lower precision than 18 and it has decimals (like USDC)
-
+/// @dev Authed TokenAdapter for a token that has a lower precision than 18 and it has decimals (like USDC)
 contract AuthTokenAdapter is
     PausableUpgradeable,
     AccessControlUpgradeable,
@@ -32,7 +30,6 @@ contract AuthTokenAdapter is
     uint256 public override decimals; // collateralToken decimals
     uint256 public live; // Access Flag
 
-    // --- Events ---
     event LogDeposit(address indexed urn, uint256 wad, address indexed msgSender);
     event LogWithdraw(address indexed guy, uint256 wad);
 
@@ -71,19 +68,15 @@ contract AuthTokenAdapter is
         bookKeeper = IBookKeeper(_bookKeeper);
         collateralPoolId = _collateralPoolId;
 
-        // Grant the contract deployer the owner role: it will be able
-        // to grant and revoke any roles
         _setupRole(IAccessControlConfig(bookKeeper.accessControlConfig()).OWNER_ROLE(), msg.sender);
     }
 
-    /// @dev access: OWNER_ROLE, SHOW_STOPPER_ROLE
     function cage() external override onlyOwnerOrShowStopper {
         require(live == 1, 'AuthTokenAdapter/not-live');
         live = 0;
         emit LogCage();
     }
 
-    /// @dev access: OWNER_ROLE, SHOW_STOPPER_ROLE
     function uncage() external override onlyOwnerOrShowStopper {
         require(live == 0, 'AuthTokenAdapter/not-caged');
         live = 1;
@@ -94,13 +87,9 @@ contract AuthTokenAdapter is
         require(_y == 0 || (_z = _x * _y) / _y == _x, 'AuthTokenAdapter/overflow');
     }
 
-    /**
-     * @dev Deposit token into the system from the msgSender to be used as collateral
-     * @param _urn The destination address which is holding the collateral token
-     * @param _wad The amount of collateral to be deposit [wad]
-     * @param _msgSender The source address which transfer token
-     * @dev access: WHITELISTED
-     */
+    /// @param _urn The destination address which is holding the collateral token
+    /// @param _wad The amount of collateral to be deposit [wad]
+    /// @param _msgSender The source address which transfer token
     function deposit(
         address _urn,
         uint256 _wad,
@@ -115,11 +104,8 @@ contract AuthTokenAdapter is
         emit LogDeposit(_urn, _wad, _msgSender);
     }
 
-    /**
-     * @dev Withdraw token from the system to guy
-     * @param _guy The destination address to receive collateral token
-     * @param _wad The amount of collateral to be withdraw [wad]
-     */
+    /// @param _guy The destination address to receive collateral token
+    /// @param _wad The amount of collateral to be withdraw [wad]
     function withdraw(address _guy, uint256 _wad) external override nonReentrant whenNotPaused {
         uint256 _wad18 = mul(_wad, 10**(18 - decimals));
         require(int256(_wad18) >= 0, 'AuthTokenAdapter/overflow');
@@ -128,13 +114,10 @@ contract AuthTokenAdapter is
         emit LogWithdraw(_guy, _wad);
     }
 
-    // --- pause ---
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function pause() external onlyOwnerOrGov {
         _pause();
     }
 
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function unpause() external onlyOwnerOrGov {
         _unpause();
     }

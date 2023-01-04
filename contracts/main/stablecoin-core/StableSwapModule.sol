@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-pragma solidity 0.6.12;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol';
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol';
 
 import '../interfaces/IStablecoinAdapter.sol';
 import '../interfaces/IStablecoin.sol';
@@ -15,9 +14,8 @@ import '../interfaces/IStableSwapModule.sol';
 import '../utils/SafeToken.sol';
 
 // Stable Swap Module
-// Allows anyone to go between AUSD and the Token by pooling the liquidity
+// Allows anyone to go between FUSD and the Token by pooling the liquidity
 // An optional fee is charged for incoming and outgoing transfers
-
 contract StableSwapModule is PausableUpgradeable, ReentrancyGuardUpgradeable, IStableSwapModule {
     using SafeToken for address;
 
@@ -33,7 +31,6 @@ contract StableSwapModule is PausableUpgradeable, ReentrancyGuardUpgradeable, IS
     uint256 public feeIn; // fee in [wad]
     uint256 public feeOut; // fee out [wad]
 
-    // --- Events ---
     event LogSetFeeIn(address indexed _caller, uint256 _feeIn);
     event LogSetFeeOut(address indexed _caller, uint256 _feeOut);
     event LogSwapTokenToStablecoin(address indexed _owner, uint256 _value, uint256 _fee);
@@ -55,7 +52,6 @@ contract StableSwapModule is PausableUpgradeable, ReentrancyGuardUpgradeable, IS
         _;
     }
 
-    // --- Init ---
     function initialize(
         address _authTokenAdapter,
         address _stablecoinAdapter,
@@ -71,11 +67,10 @@ contract StableSwapModule is PausableUpgradeable, ReentrancyGuardUpgradeable, IS
         collateralPoolId = __authTokenAdapter.collateralPoolId();
         systemDebtEngine = _systemDebtEngine;
         to18ConversionFactor = 10**(18 - __authTokenAdapter.decimals());
-        address(_stablecoin).safeApprove(_stablecoinAdapter, uint256(-1));
+        address(_stablecoin).safeApprove(_stablecoinAdapter, type(uint256).max);
         _bookKeeper.whitelist(_stablecoinAdapter);
     }
 
-    // --- Math ---
     uint256 constant WAD = 10**18;
     uint256 constant RAY = 10**27;
 
@@ -91,38 +86,26 @@ contract StableSwapModule is PausableUpgradeable, ReentrancyGuardUpgradeable, IS
         require(_y == 0 || (_z = _x * _y) / _y == _x);
     }
 
-    /// @dev access: OWNER_ROLE
     function setFeeIn(uint256 _feeIn) external onlyOwner {
         require(_feeIn <= 5 * 1e17, 'StableSwapModule/invalid-fee-in'); // Max feeIn is 0.5 Ethers or 50%
         feeIn = _feeIn;
         emit LogSetFeeIn(msg.sender, _feeIn);
     }
 
-    /// @dev access: OWNER_ROLE
     function setFeeOut(uint256 _feeOut) external onlyOwner {
         require(_feeOut <= 5 * 1e17, 'StableSwapModule/invalid-fee-in'); // Max feeOut is 0.5 Ethers or 50%
         feeOut = _feeOut;
         emit LogSetFeeOut(msg.sender, _feeOut);
     }
 
-    // hope can be used to transfer control of the PSM vault to another contract
-    // This can be used to upgrade the contract
-    /// @dev access: OWNER_ROLE
     function whitelist(address _usr) external onlyOwner {
         bookKeeper.whitelist(_usr);
     }
 
-    /// @dev access: OWNER_ROLE
     function blacklist(address _usr) external onlyOwner {
         bookKeeper.blacklist(_usr);
     }
 
-    // --- Primary Functions ---
-    /**
-     * @dev Deposit token into the system and withdraw to receive stablecoin
-     * @param _usr The address of the account to sell
-     * @param _tokenAmount The Amount of token to sell
-     */
     function swapTokenToStablecoin(address _usr, uint256 _tokenAmount) external override nonReentrant whenNotPaused {
         require(_tokenAmount != 0, 'StableSwapModule/amount-zero');
         uint256 _tokenAmount18 = mul(_tokenAmount, to18ConversionFactor);
@@ -143,11 +126,6 @@ contract StableSwapModule is PausableUpgradeable, ReentrancyGuardUpgradeable, IS
         emit LogSwapTokenToStablecoin(_usr, _tokenAmount, _fee);
     }
 
-    /**
-     * @dev Deposit stablecoin into the system and withdraw to receive token
-     * @param _usr The address of the account to buy
-     * @param _tokenAmount The Amount of token to buy
-     */
     function swapStablecoinToToken(address _usr, uint256 _tokenAmount) external override nonReentrant whenNotPaused {
         require(_tokenAmount != 0, 'StableSwapModule/amount-zero');
         uint256 _tokenAmount18 = mul(_tokenAmount, to18ConversionFactor);
@@ -168,13 +146,10 @@ contract StableSwapModule is PausableUpgradeable, ReentrancyGuardUpgradeable, IS
         emit LogSwapStablecoinToToken(_usr, _tokenAmount, _fee);
     }
 
-    // --- pause ---
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function pause() external onlyOwnerOrGov {
         _pause();
     }
 
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function unpause() external onlyOwnerOrGov {
         _unpause();
     }

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+pragma solidity 0.8.17;
 
-pragma solidity 0.6.12;
-
-import '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol';
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
 
 import '../interfaces/IERC3156FlashLender.sol';
@@ -22,7 +21,6 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
         _;
     }
 
-    // --- Data ---
     IBookKeeper public bookKeeper;
     IStablecoinAdapter public stablecoinAdapter;
     IStablecoin public stablecoin;
@@ -36,7 +34,6 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
     bytes32 public constant CALLBACK_SUCCESS_BOOK_KEEPER_STABLE_COIN =
         keccak256('BookKeeperFlashBorrower.onBookKeeperFlashLoan');
 
-    // --- Events ---
     event LogSetMax(uint256 _data);
     event LogSetFeeRate(uint256 _data);
     event LogFlashLoan(address indexed _receiver, address _token, uint256 _amount, uint256 _fee);
@@ -49,7 +46,6 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
         locked = 0;
     }
 
-    // --- Init ---
     function initialize(address _stablecoinAdapter, address _systemDebtEngine) external initializer {
         // 1. Initialized all dependencies
         PausableUpgradeable.__Pausable_init();
@@ -64,7 +60,6 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
         address(stablecoin).safeApprove(_stablecoinAdapter, type(uint256).max);
     }
 
-    // --- Math ---
     uint256 constant WAD = 10**18;
     uint256 constant RAY = 10**27;
     uint256 constant RAD = 10**45;
@@ -77,15 +72,12 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
         require(_y == 0 || (_z = _x * _y) / _y == _x);
     }
 
-    // --- Administration ---
-    /// @dev access: OWNER_ROLE
     function setMax(uint256 _data) external onlyOwner {
         // Add an upper limit of 10^27 Stablecoin to avoid breaking technical assumptions of Stablecoin << 2^256 - 1
         require((max = _data) <= RAD, 'FlashMintModule/ceiling-too-high');
         emit LogSetMax(_data);
     }
 
-    /// @dev access: OWNER_ROLE
     function setFeeRate(uint256 _data) external onlyOwner {
         feeRate = _data;
         emit LogSetFeeRate(_data);
@@ -119,7 +111,9 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
         uint256 _fee = _mul(_amount, feeRate) / WAD;
         uint256 _total = _add(_amount, _fee);
 
+        //_amt is in RAD, to calculat internal balance of stablecoin
         bookKeeper.mintUnbackedStablecoin(address(this), address(this), _amt);
+        //minting requested amount to flashMint receiver
         stablecoinAdapter.withdraw(address(_receiver), _amount, abi.encode(0));
 
         emit LogFlashLoan(address(_receiver), _token, _amount, _fee);
@@ -128,7 +122,6 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
             _receiver.onFlashLoan(msg.sender, _token, _amount, _fee, _data) == CALLBACK_SUCCESS,
             'FlashMintModule/callback-failed'
         );
-
         address(stablecoin).safeTransferFrom(address(_receiver), address(this), _total); // The fee is also enforced here
         stablecoinAdapter.deposit(address(this), _total, abi.encode(0));
         bookKeeper.settleSystemBadDebt(_amt);
@@ -136,7 +129,6 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
         return true;
     }
 
-    // --- BookKeeper Flash Loan ---
     function bookKeeperFlashLoan(
         IBookKeeperFlashBorrower _receiver, // address of conformant IBookKeeperFlashBorrower
         uint256 _amount, // amount to flash loan [rad]
@@ -171,7 +163,6 @@ contract FlashMintModule is PausableUpgradeable, IERC3156FlashLender, IBookKeepe
         bookKeeper.moveStablecoin(address(this), systemDebtEngine, bookKeeper.stablecoin(address(this)));
     }
 
-    /// @dev access: OWNER_ROLE
     function refreshApproval() external lock onlyOwner {
         address(stablecoin).safeApprove(address(stablecoinAdapter), type(uint256).max);
     }

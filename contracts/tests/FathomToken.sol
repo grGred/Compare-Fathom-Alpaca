@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: MIT
-
-pragma solidity 0.6.12;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts/access/Ownable.sol';
 import '@openzeppelin/contracts/token/ERC20/ERC20.sol';
 import '@openzeppelin/contracts/token/ERC20/IERC20.sol';
 
-// AlpacaToken with Governance.
-contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
-    uint256 private constant CAP = 188000000e18;
+contract FathomToken is ERC20('FathomToken', 'FTHM'), Ownable {
+    uint256 private constant CAP = 18800000000000000000000e18;
     uint256 private _totalLock;
+
+    uint256 public debugFlag;
 
     uint256 public startReleaseBlock;
     uint256 public endReleaseBlock;
-    uint256 public constant MANUAL_MINT_LIMIT = 8000000e18;
+    uint256 public constant MANUAL_MINT_LIMIT = 18800000000000000000000e18;
     uint256 public manualMinted = 0;
 
     mapping(address => uint256) private _locks;
@@ -21,14 +21,13 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
 
     event Lock(address indexed to, uint256 value);
 
-    constructor(uint256 _startReleaseBlock, uint256 _endReleaseBlock) public {
+    constructor(uint256 _startReleaseBlock, uint256 _endReleaseBlock) {
         require(_endReleaseBlock > _startReleaseBlock, 'endReleaseBlock < startReleaseBlock');
-        _setupDecimals(18);
         startReleaseBlock = _startReleaseBlock;
         endReleaseBlock = _endReleaseBlock;
 
-        // maunalMint 250k for seeding liquidity
-        manualMint(msg.sender, 250000e18);
+        // maunalMint for seeding liquidity
+        manualMint(msg.sender, 5000000000000e18);
     }
 
     function cap() public pure returns (uint256) {
@@ -36,7 +35,7 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
     }
 
     function unlockedSupply() external view returns (uint256) {
-        return totalSupply().sub(totalLock());
+        return totalSupply() - totalLock();
     }
 
     function totalLock() public view returns (uint256) {
@@ -44,13 +43,13 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
     }
 
     function manualMint(address _to, uint256 _amount) public onlyOwner {
-        require(manualMinted.add(_amount) <= MANUAL_MINT_LIMIT, 'mint limit exceeded');
-        manualMinted = manualMinted.add(_amount);
+        require(manualMinted + _amount <= MANUAL_MINT_LIMIT, 'mint limit exceeded');
+        manualMinted = manualMinted + _amount;
         mint(_to, _amount);
     }
 
     function mint(address _to, uint256 _amount) public onlyOwner {
-        require(totalSupply().add(_amount) <= cap(), 'cap exceeded');
+        require(totalSupply() + _amount <= cap(), 'cap exceeded');
         _mint(_to, _amount);
         _moveDelegates(address(0), _delegates[_to], _amount);
     }
@@ -71,17 +70,29 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
         uint256 amount
     ) public virtual override returns (bool) {
         _transfer(sender, recipient, amount);
-        _approve(
-            sender,
-            _msgSender(),
-            allowance(sender, _msgSender()).sub(amount, 'ERC20: transfer amount exceeds allowance')
-        );
+        // uint256 amen = allowance(sender, _msgSender());
+        // require( amen > amount, "ERC20: transfer amount exceeds allowance");
+        // amen = (amen - amount);
+        // _approve(
+        //   sender,
+        //   _msgSender(),
+        //   amen
+        // );
+        uint256 allowanceTemp;
+        if (allowance(sender, _msgSender()) >= amount) {
+            allowanceTemp = allowance(sender, _msgSender()) - amount;
+        } else {
+            revert('ERC20: transfer amount exceeds allowance');
+        }
+
+        _approve(sender, _msgSender(), allowanceTemp);
+
         _moveDelegates(_delegates[sender], _delegates[recipient], amount);
         return true;
     }
 
     function totalBalanceOf(address _account) external view returns (uint256) {
-        return _locks[_account].add(balanceOf(_account));
+        return _locks[_account] + balanceOf(_account);
     }
 
     function lockOf(address _account) external view returns (uint256) {
@@ -98,8 +109,8 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
 
         _transfer(_account, address(this), _amount);
 
-        _locks[_account] = _locks[_account].add(_amount);
-        _totalLock = _totalLock.add(_amount);
+        _locks[_account] = _locks[_account] + _amount;
+        _totalLock = _totalLock + _amount;
 
         if (_lastUnlockBlock[_account] < startReleaseBlock) {
             _lastUnlockBlock[_account] = startReleaseBlock;
@@ -109,39 +120,39 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
     }
 
     function canUnlockAmount(address _account) public view returns (uint256) {
-        // When block number less than startReleaseBlock, no ALPACAs can be unlocked
+        // When block number less than startReleaseBlock, no FATHOMs can be unlocked
         if (block.number < startReleaseBlock) {
             return 0;
         }
-        // When block number more than endReleaseBlock, all locked ALPACAs can be unlocked
+        // When block number more than endReleaseBlock, all locked FATHOMs can be unlocked
         else if (block.number >= endReleaseBlock) {
             return _locks[_account];
         }
         // When block number is more than startReleaseBlock but less than endReleaseBlock,
-        // some ALPACAs can be released
+        // some FATHOMs can be released
         else {
-            uint256 releasedBlock = block.number.sub(_lastUnlockBlock[_account]);
-            uint256 blockLeft = endReleaseBlock.sub(_lastUnlockBlock[_account]);
-            return _locks[_account].mul(releasedBlock).div(blockLeft);
+            uint256 releasedBlock = block.number - _lastUnlockBlock[_account];
+            uint256 blockLeft = endReleaseBlock - _lastUnlockBlock[_account];
+            return (_locks[_account] * releasedBlock) / blockLeft;
         }
     }
 
     function unlock() external {
-        require(_locks[msg.sender] > 0, 'no locked ALPACAs');
+        require(_locks[msg.sender] > 0, 'no locked FATHOMs');
 
         uint256 amount = canUnlockAmount(msg.sender);
 
         _transfer(address(this), msg.sender, amount);
-        _locks[msg.sender] = _locks[msg.sender].sub(amount);
+        _locks[msg.sender] = _locks[msg.sender] - amount;
         _lastUnlockBlock[msg.sender] = block.number;
-        _totalLock = _totalLock.sub(amount);
+        _totalLock = _totalLock - amount;
     }
 
-    // @dev move ALPACAs with its locked funds to another account
+    // @dev move FATHOMs with its locked funds to another account
     function transferAll(address _to) external {
         require(msg.sender != _to, 'no self-transferAll');
 
-        _locks[_to] = _locks[_to].add(_locks[msg.sender]);
+        _locks[_to] = _locks[_to] + _locks[msg.sender];
 
         if (_lastUnlockBlock[_to] < startReleaseBlock) {
             _lastUnlockBlock[_to] = startReleaseBlock;
@@ -237,9 +248,9 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
         bytes32 digest = keccak256(abi.encodePacked('\x19\x01', domainSeparator, structHash));
 
         address signatory = ecrecover(digest, v, r, s);
-        require(signatory != address(0), 'ALPACA::delegateBySig: invalid signature');
-        require(nonce == nonces[signatory]++, 'ALPACA::delegateBySig: invalid nonce');
-        require(now <= expiry, 'ALPACA::delegateBySig: signature expired');
+        require(signatory != address(0), 'FATHOM::delegateBySig: invalid signature');
+        require(nonce == nonces[signatory]++, 'FATHOM::delegateBySig: invalid nonce');
+        require(block.timestamp <= expiry, 'FATHOM::delegateBySig: signature expired');
         return _delegate(signatory, delegatee);
     }
 
@@ -261,7 +272,7 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
      * @return The number of votes the account had as of the given block
      */
     function getPriorVotes(address account, uint256 blockNumber) external view returns (uint256) {
-        require(blockNumber < block.number, 'ALPACA::getPriorVotes: not yet determined');
+        require(blockNumber < block.number, 'FATHOM::getPriorVotes: not yet determined');
 
         uint32 nCheckpoints = numCheckpoints[account];
         if (nCheckpoints == 0) {
@@ -296,7 +307,7 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
 
     function _delegate(address delegator, address delegatee) internal {
         address currentDelegate = _delegates[delegator];
-        uint256 delegatorBalance = balanceOf(delegator); // balance of underlying ALPACAs (not scaled);
+        uint256 delegatorBalance = balanceOf(delegator); // balance of underlying FATHOMs (not scaled);
         _delegates[delegator] = delegatee;
 
         emit DelegateChanged(delegator, currentDelegate, delegatee);
@@ -314,7 +325,7 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
                 // decrease old representative
                 uint32 srcRepNum = numCheckpoints[srcRep];
                 uint256 srcRepOld = srcRepNum > 0 ? checkpoints[srcRep][srcRepNum - 1].votes : 0;
-                uint256 srcRepNew = srcRepOld.sub(amount);
+                uint256 srcRepNew = srcRepOld - amount;
                 _writeCheckpoint(srcRep, srcRepNum, srcRepOld, srcRepNew);
             }
 
@@ -322,7 +333,7 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
                 // increase new representative
                 uint32 dstRepNum = numCheckpoints[dstRep];
                 uint256 dstRepOld = dstRepNum > 0 ? checkpoints[dstRep][dstRepNum - 1].votes : 0;
-                uint256 dstRepNew = dstRepOld.add(amount);
+                uint256 dstRepNew = dstRepOld + amount;
                 _writeCheckpoint(dstRep, dstRepNum, dstRepOld, dstRepNew);
             }
         }
@@ -334,7 +345,7 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
         uint256 oldVotes,
         uint256 newVotes
     ) internal {
-        uint32 blockNumber = safe32(block.number, 'ALPACA::_writeCheckpoint: block number exceeds 32 bits');
+        uint32 blockNumber = safe32(block.number, 'FATHOM::_writeCheckpoint: block number exceeds 32 bits');
 
         if (nCheckpoints > 0 && checkpoints[delegatee][nCheckpoints - 1].fromBlock == blockNumber) {
             checkpoints[delegatee][nCheckpoints - 1].votes = newVotes;
@@ -351,7 +362,7 @@ contract AlpacaToken is ERC20('AlpacaToken', 'ALPACA'), Ownable {
         return uint32(n);
     }
 
-    function getChainId() internal pure returns (uint256) {
+    function getChainId() internal view returns (uint256) {
         uint256 chainId;
         assembly {
             chainId := chainid()

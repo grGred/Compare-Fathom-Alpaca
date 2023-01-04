@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+pragma solidity 0.8.17;
 
-pragma solidity 0.6.12;
-
-contract AlpacaNote {
+contract FathomNote {
     event LogNote(
         bytes4 indexed sig,
         address indexed guy,

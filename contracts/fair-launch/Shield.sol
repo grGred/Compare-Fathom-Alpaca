@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
-
-pragma solidity 0.6.12;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts/access/Ownable.sol';
-import '@openzeppelin/contracts/math/SafeMath.sol';
+import '@openzeppelin/contracts/utils/math/SafeMath.sol';
 
 import './interfaces/IFairLaunchV1.sol';
 
@@ -15,22 +14,22 @@ contract Shield is Ownable {
     uint256 public mintLimit = 8000000e18;
     uint256 public mintCount = 250000e18;
 
-    event SetAlpacaPerBlock(uint256 indexed _alpacaPerBlock);
+    event SetFathomPerBlock(uint256 indexed _fathomPerBlock);
     event SetBonus(uint256 _bonusMultiplier, uint256 _bonusEndBlock, uint256 _bonusLockUpBps);
     event MintWarchest(address indexed _to, uint256 _amount);
     event AddPool(uint256 indexed _pid, uint256 _allocPoint, address indexed _stakeToken);
     event SetPool(uint256 indexed _pid, uint256 _allocPoint);
 
-    constructor(address _owner, IFairLaunchV1 _fairLaunchV1) public {
+    constructor(address _owner, IFairLaunchV1 _fairLaunchV1) {
         transferOwnership(_owner);
         fairLaunchV1 = _fairLaunchV1;
     }
 
-    /// @dev Set ALPACA per Block on FLV1. Effect immediately on the next block.
-    /// @param _alpacaPerBlock The new alpacaPerBlock
-    function setAlpacaPerBlock(uint256 _alpacaPerBlock) external onlyOwner {
-        fairLaunchV1.setAlpacaPerBlock(_alpacaPerBlock);
-        emit SetAlpacaPerBlock(_alpacaPerBlock);
+    /// @dev Set FATHOM per Block on FLV1. Effect immediately on the next block.
+    /// @param _fathomPerBlock The new fathomPerBlock
+    function setFathomPerBlock(uint256 _fathomPerBlock) external onlyOwner {
+        fairLaunchV1.setFathomPerBlock(_fathomPerBlock);
+        emit SetFathomPerBlock(_fathomPerBlock);
     }
 
     /// @dev Set Bonus period on FLV1. This shouldn't be used much. Better use FLV2
@@ -46,7 +45,7 @@ contract Shield is Ownable {
         emit SetBonus(_bonusMultiplier, _bonusEndBlock, _bonusLockUpBps);
     }
 
-    /// @dev Maunally mint ALPACA warchest portion.
+    /// @dev Maunally mint FATHOM warchest portion.
     /// @param _to Mint to which address
     /// @param _amount Amount to be minted
     function mintWarchest(address _to, uint256 _amount) external onlyOwner {

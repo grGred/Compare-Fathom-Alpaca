@@ -1,25 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-
-pragma solidity 0.6.12;
-pragma experimental ABIEncoderV2;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol';
 
 import './PositionHandler.sol';
 import '../interfaces/IManager.sol';
 import '../interfaces/IBookKeeper.sol';
 import '../interfaces/IGenericTokenAdapter.sol';
 import '../interfaces/IShowStopper.sol';
+import '../interfaces/ISetPrice.sol';
+import '../interfaces/IPriceFeed.sol';
 
-/// @title PositionManager is a contract for manging positions
 contract PositionManager is PausableUpgradeable, IManager {
-    /// @dev Address of a BookKeeper
     address public override bookKeeper;
-
     address public showStopper;
+    address public priceOracle;
 
-    /// @dev The lastest id that has been used
     uint256 public lastPositionId;
     /// @dev Mapping of positionId => positionHandler
     mapping(uint256 => address) public override positions;
@@ -32,11 +29,8 @@ contract PositionManager is PausableUpgradeable, IManager {
     /// @dev Mapping of positionId => collateralPool
     mapping(uint256 => bytes32) public override collateralPools;
 
-    /// @dev Mapping of owner => the first positionId
     mapping(address => uint256) public ownerFirstPositionId;
-    /// @dev Mapping of owner => the last positionId
     mapping(address => uint256) public ownerLastPositionId;
-    /// @dev Mapping of owner => the number of positions he has
     mapping(address => uint256) public ownerPositionCount;
 
     /// @dev Mapping of owner => whitelisted address that can manage owner's position
@@ -102,9 +96,11 @@ contract PositionManager is PausableUpgradeable, IManager {
         _;
     }
 
-    /// @dev Initializer for intializing PositionManager
-    /// @param _bookKeeper The address of the Book Keeper
-    function initialize(address _bookKeeper, address _showStopper) external initializer {
+    function initialize(
+        address _bookKeeper,
+        address _showStopper,
+        address _priceOracle
+    ) external initializer {
         PausableUpgradeable.__Pausable_init();
 
         IBookKeeper(_bookKeeper).totalStablecoinIssued(); // Sanity Check Call
@@ -112,6 +108,8 @@ contract PositionManager is PausableUpgradeable, IManager {
 
         IShowStopper(_showStopper).live(); // Sanity Check Call
         showStopper = _showStopper;
+
+        priceOracle = _priceOracle;
     }
 
     function _safeAdd(uint256 _x, uint256 _y) internal pure returns (uint256 _z) {
@@ -198,18 +196,15 @@ contract PositionManager is PausableUpgradeable, IManager {
         }
 
         if (list[_positionId].next != 0) {
-            // If wasn't the last one
-            // Set the prev pointer of the next position to the prev of the transferred one
+            // If wasn't the last one set the prev pointer of the next position to the prev of the transferred one
             list[list[_positionId].next].prev = list[_positionId].prev;
         } else {
-            // If was the last one
-            // Update last pointer of the owner
+            // If was the last one update last pointer of the owner
             ownerLastPositionId[owners[_positionId]] = list[_positionId].prev;
         }
 
         if (ownerFirstPositionId[owners[_positionId]] == _positionId) {
-            // If was the first one
-            // Update first pointer of the owner
+            // If was the first one update first pointer of the owner
             ownerFirstPositionId[owners[_positionId]] = list[_positionId].next;
         }
         ownerPositionCount[owners[_positionId]] = _safeSub(ownerPositionCount[owners[_positionId]], 1);
@@ -231,8 +226,7 @@ contract PositionManager is PausableUpgradeable, IManager {
         ownerPositionCount[_destination] = _safeAdd(ownerPositionCount[_destination], 1);
     }
 
-    /// @dev Adjust the position keeping the generated stablecoin
-    /// or collateral freed in the positionHandler address.
+    /// @dev Adjust the position keeping the generated stablecoin or collateral freed in the positionHandler address.
     /// @param _positionId The position id to be adjusted
     /// @param _collateralValue The collateralValue to be adjusted
     /// @param _debtShare The debtShare to be adjusted
@@ -245,6 +239,9 @@ contract PositionManager is PausableUpgradeable, IManager {
         address _adapter,
         bytes calldata _data
     ) external override whenNotPaused onlyOwnerAllowed(_positionId) {
+        bytes32 _collateralPoolId = collateralPools[_positionId];
+        require(_isPriceHealthy(_collateralPoolId), 'PositionManager/price-is-not-healthy');
+
         address _positionAddress = positions[_positionId];
         IBookKeeper(bookKeeper).adjustPosition(
             collateralPools[_positionId],
@@ -261,6 +258,8 @@ contract PositionManager is PausableUpgradeable, IManager {
             _debtShare,
             _data
         );
+
+        ISetPrice(priceOracle).setPrice(_collateralPoolId);
     }
 
     /// @dev Transfer wad amount of position's collateral from the positionHandler address to a destination address.
@@ -276,6 +275,9 @@ contract PositionManager is PausableUpgradeable, IManager {
         address _adapter,
         bytes calldata _data
     ) external override whenNotPaused onlyOwnerAllowed(_positionId) {
+        bytes32 _collateralPoolId = collateralPools[_positionId];
+        require(_isPriceHealthy(_collateralPoolId), 'PositionManager/price-is-not-healthy');
+
         IBookKeeper(bookKeeper).moveCollateral(
             collateralPools[_positionId],
             positions[_positionId],
@@ -301,6 +303,8 @@ contract PositionManager is PausableUpgradeable, IManager {
         address _adapter,
         bytes calldata _data
     ) external whenNotPaused onlyOwnerAllowed(_positionId) {
+        require(_isPriceHealthy(_collateralPoolId), 'PositionManager/price-is-not-healthy');
+
         IBookKeeper(bookKeeper).moveCollateral(_collateralPoolId, positions[_positionId], _destination, _wad);
         IGenericTokenAdapter(_adapter).onMoveCollateral(positions[_positionId], _destination, _wad, _data);
     }
@@ -415,13 +419,15 @@ contract PositionManager is PausableUpgradeable, IManager {
         emit LogMovePosition(_sourceId, _destinationId, _lockedCollateral, _debtShare);
     }
 
-    // --- pause ---
-    /// @dev access: OWNER_ROLE, GOV_ROLE
+    function setPriceOracle(address _priceOracle) external onlyOwnerOrGov {
+        require(_priceOracle != address(0), '_priceOracle cannot be zero address');
+        priceOracle = _priceOracle;
+    }
+
     function pause() external onlyOwnerOrGov {
         _pause();
     }
 
-    /// @dev access: OWNER_ROLE, GOV_ROLE
     function unpause() external onlyOwnerOrGov {
         _unpause();
     }
@@ -444,5 +450,16 @@ contract PositionManager is PausableUpgradeable, IManager {
             _collateralReceiver,
             _data
         );
+    }
+
+    function updatePrice(bytes32 _poolId) external override whenNotPaused {
+        ISetPrice(priceOracle).setPrice(_poolId);
+    }
+
+    function _isPriceHealthy(bytes32 _poolId) internal view returns (bool) {
+        IPriceFeed _priceFeed = IPriceFeed(
+            ICollateralPoolConfig(IBookKeeper(bookKeeper).collateralPoolConfig()).getPriceFeed(_poolId)
+        );
+        return _priceFeed.isPriceOk();
     }
 }

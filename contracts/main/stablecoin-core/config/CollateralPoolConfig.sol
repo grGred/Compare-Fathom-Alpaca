@@ -1,21 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/**
-  ∩~~~~∩ 
-  ξ ･×･ ξ 
-  ξ　~　ξ 
-  ξ　　 ξ 
-  ξ　　 “~～~～〇 
-  ξ　　　　　　 ξ 
-  ξ ξ ξ~～~ξ ξ ξ 
-　 ξ_ξξ_ξ　ξ_ξξ_ξ
-Alpaca Fin Corporation
-*/
-
-pragma solidity 0.6.12;
-pragma experimental ABIEncoderV2;
+pragma solidity 0.8.17;
 
 import '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-import '@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol';
+import '@openzeppelin/contracts-upgradeable/utils/math/SafeMathUpgradeable.sol';
 
 import '../../interfaces/IPriceFeed.sol';
 import '../../interfaces/IGenericTokenAdapter.sol';
@@ -49,6 +36,13 @@ contract CollateralPoolConfig is AccessControlUpgradeable, ICollateralPoolConfig
     event LogSetStrategy(address indexed _caller, bytes32 _collateralPoolId, address strategy);
     event LogSetTotalDebtShare(address indexed _caller, bytes32 _collateralPoolId, uint256 _totalDebtShare);
     event LogSetDebtAccumulatedRate(address indexed _caller, bytes32 _collateralPoolId, uint256 _debtAccumulatedRate);
+    event LogInitCollateralPoolId(
+        bytes32 _collateralPoolId,
+        uint256 _debtCeiling,
+        uint256 _liquidationRatio,
+        uint256 _stabilityFeeRate,
+        address _adapter
+    );
 
     mapping(bytes32 => ICollateralPoolConfig.CollateralPool) private _collateralPools;
 
@@ -68,25 +62,22 @@ contract CollateralPoolConfig is AccessControlUpgradeable, ICollateralPoolConfig
         _;
     }
 
-    // --- Init ---
     function initialize(address _accessControlConfig) external initializer {
         AccessControlUpgradeable.__AccessControl_init();
 
         accessControlConfig = IAccessControlConfig(_accessControlConfig);
 
-        // Grant the contract deployer the owner role: it will be able
-        // to grant and revoke any roles
         _setupRole(accessControlConfig.OWNER_ROLE(), msg.sender);
     }
 
     function initCollateralPool(
-        bytes32 _collateralPoolId,
-        uint256 _debtCeiling,
+        bytes32 _collateralPoolId, // v
+        uint256 _debtCeiling, // v
         uint256 _debtFloor,
         address _priceFeed,
-        uint256 _liquidationRatio,
-        uint256 _stabilityFeeRate,
-        address _adapter,
+        uint256 _liquidationRatio, // v
+        uint256 _stabilityFeeRate, //v
+        address _adapter, //v
         uint256 _closeFactorBps,
         uint256 _liquidatorIncentiveBps,
         uint256 _treasuryFeesBps,
@@ -107,7 +98,7 @@ contract CollateralPoolConfig is AccessControlUpgradeable, ICollateralPoolConfig
         // Maximum stability fee rate is 50% yearly
         require(_stabilityFeeRate <= 1000000012857214317438491659, 'CollateralPoolConfig/stability-fee-rate-too-large');
         _collateralPools[_collateralPoolId].stabilityFeeRate = _stabilityFeeRate;
-        _collateralPools[_collateralPoolId].lastAccumulationTime = now;
+        _collateralPools[_collateralPoolId].lastAccumulationTime = block.timestamp;
         IGenericTokenAdapter(_adapter).decimals(); // Sanity Check Call
         _collateralPools[_collateralPoolId].adapter = _adapter;
         require(_closeFactorBps <= 10000, 'CollateralPoolConfig/invalid-close-factor-bps');
@@ -120,6 +111,8 @@ contract CollateralPoolConfig is AccessControlUpgradeable, ICollateralPoolConfig
         _collateralPools[_collateralPoolId].liquidatorIncentiveBps = _liquidatorIncentiveBps;
         _collateralPools[_collateralPoolId].treasuryFeesBps = _treasuryFeesBps;
         _collateralPools[_collateralPoolId].strategy = _strategy;
+
+        emit LogInitCollateralPoolId(_collateralPoolId, _debtCeiling, _liquidationRatio, _stabilityFeeRate, _adapter);
     }
 
     function setPriceWithSafetyMargin(bytes32 _collateralPoolId, uint256 _priceWithSafetyMargin) external override {
@@ -150,30 +143,19 @@ contract CollateralPoolConfig is AccessControlUpgradeable, ICollateralPoolConfig
 
     /** @dev Set the stability fee rate of the collateral pool.
       The rate to be set here is the `r` in:
-
           r^N = APR
-
       Where:
         r = stability fee rate
         N = Accumulation frequency which is per-second in this case; the value will be 60*60*24*365 = 31536000 to signify the number of seconds within a year.
         APR = the annual percentage rate
-
     For example, to achieve 0.5% APR for stability fee rate:
-
           r^31536000 = 1.005
-
     Find the 31536000th root of 1.005 and we will get:
-
           r = 1.000000000158153903837946258002097...
-
     The rate is in [ray] format, so the actual value of `stabilityFeeRate` will be:
-
           stabilityFeeRate = 1000000000158153903837946258
-
     The above `stabilityFeeRate` will be the value we will use in this contract.
   */
-    /// @param _collateralPool Collateral pool id
-    /// @param _stabilityFeeRate the new stability fee rate [ray]
     function setStabilityFeeRate(bytes32 _collateralPool, uint256 _stabilityFeeRate) external onlyOwner {
         require(_stabilityFeeRate == 0 || _stabilityFeeRate >= RAY, 'CollateralPoolConfig/invalid-stability-fee-rate');
         // Maximum stability fee rate is 50% yearly
@@ -230,7 +212,7 @@ contract CollateralPoolConfig is AccessControlUpgradeable, ICollateralPoolConfig
             accessControlConfig.hasRole(accessControlConfig.STABILITY_FEE_COLLECTOR_ROLE(), msg.sender),
             '!stabilityFeeCollectorRole'
         );
-        _collateralPools[_collateralPoolId].lastAccumulationTime = now;
+        _collateralPools[_collateralPoolId].lastAccumulationTime = block.timestamp;
     }
 
     function getTotalDebtShare(bytes32 _collateralPoolId) external view override returns (uint256) {
