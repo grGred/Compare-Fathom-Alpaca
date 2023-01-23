@@ -1,39 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-/**
-  ∩~~~~∩ 
-  ξ ･×･ ξ 
-  ξ　~　ξ 
-  ξ　　 ξ 
-  ξ　　 “~～~～〇 
-  ξ　　　　　　 ξ 
-  ξ ξ ξ~～~ξ ξ ξ 
-　 ξ_ξξ_ξ　ξ_ξξ_ξ
-Alpaca Fin Corporation
-*/
+pragma solidity 0.8.17;
 
-pragma solidity 0.6.12;
-
-import '../FlashMintModule.sol';
-import '../../interfaces/IBookKeeperFlashBorrower.sol';
-import '../../interfaces/IERC3156FlashBorrower.sol';
-import '../../utils/SafeToken.sol';
+import "../FlashMintModule.sol";
+import "../../interfaces/IBookKeeperFlashBorrower.sol";
+import "../../interfaces/IERC3156FlashBorrower.sol";
+import "../../utils/SafeToken.sol";
 
 abstract contract FlashLoanReceiverBase is IBookKeeperFlashBorrower, IERC3156FlashBorrower {
     using SafeToken for address;
 
     FlashMintModule public flash;
 
-    bytes32 public constant CALLBACK_SUCCESS = keccak256('ERC3156FlashBorrower.onFlashLoan');
-    bytes32 public constant CALLBACK_SUCCESS_BOOK_KEEPER_STABLE_COIN =
-        keccak256('BookKeeperFlashBorrower.onBookKeeperFlashLoan');
+    bytes32 public constant CALLBACK_SUCCESS = keccak256("ERC3156FlashBorrower.onFlashLoan");
+    bytes32 public constant CALLBACK_SUCCESS_BOOK_KEEPER_STABLE_COIN = keccak256("BookKeeperFlashBorrower.onBookKeeperFlashLoan");
 
-    // --- Init ---
-    constructor(address _flash) public {
+    constructor(address _flash) {
         flash = FlashMintModule(_flash);
     }
 
-    // --- Math ---
-    uint256 constant RAY = 10**27;
+    uint256 constant RAY = 10 ** 27;
 
     function rad(uint256 _wad) internal pure returns (uint256) {
         return mul(_wad, RAY);
